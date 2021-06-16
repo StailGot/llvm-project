@@ -15,7 +15,8 @@
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Tooling/Core/Diagnostic.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/Support/Regex.h"
+//#include "llvm/Support/Regex.h"
+#include <regex>
 
 namespace clang {
 
@@ -263,7 +264,7 @@ private:
 
   /// Returns the \c HeaderFilter constructed for the options set in the
   /// context.
-  llvm::Regex *getHeaderFilter();
+  std::regex *getHeaderFilter();
 
   /// Updates \c LastErrorRelatesToUserCode and LastErrorPassesLineFilter
   /// according to the diagnostic \p Location.
@@ -278,7 +279,7 @@ private:
   bool GetFixesFromNotes;
   bool EnableNolintBlocks;
   std::vector<ClangTidyError> Errors;
-  std::unique_ptr<llvm::Regex> HeaderFilter;
+  std::unique_ptr<std::regex> HeaderFilter;
   bool LastErrorRelatesToUserCode;
   bool LastErrorPassesLineFilter;
   bool LastErrorWasIgnored;
