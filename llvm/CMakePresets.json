@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "LLVM_ENABLE_PROJECTS": "clang;clang-tools-extra;compiler-rt;lld"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      }
+    },
+    {
+      "name": "clang-cl-default",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "${sourceDir}/out/Release-x64/bin/clang-cl.exe",
+        "CMAKE_CXX_COMPILER": "${sourceDir}/out/Release-x64/bin/clang-cl.exe",
+        "CMAKE_LINKER": "${sourceDir}/out/Release-x64/bin/lld-link.exe"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "intelliSenseMode": "windows-clang-x64"
+        }
+      }
+    },
+    {
+      "name": "Debug-x64",
+      "displayName": "Debug-x64",
+      "inherits": [ "default" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "Release-x64",
+      "displayName": "Release-x64",
+      "inherits": [ "default" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LLVM_INTEGRATED_CRT_ALLOC": "${sourceDir}/../../rpmalloc",
+        "LLVM_USE_CRT_RELEASE": "MT"
+      }
+    },
+    {
+      "name": "xClangCL-Debug-x64",
+      "displayName": "xClangCL-Debug-x64",
+      "inherits": [ "clang-cl-default", "default" ]
+    },
+    {
+      "name": "xClangCL-Release-x64",
+      "displayName": "xClangCL-Release-x64",
+      "inherits": [ "clang-cl-default", "default" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LLVM_INTEGRATED_CRT_ALLOC": "${sourceDir}/../../rpmalloc",
+        "LLVM_USE_CRT_RELEASE": "MT"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "Debug-x64",
+      "configurePreset": "Debug-x64"
+    },
+    {
+      "name": "Release-x64",
+      "configurePreset": "Release-x64"
+    },
+    {
+      "name": "xClangCL-Debug-x64",
+      "configurePreset": "xClangCL-Debug-x64",
+      "nativeToolOptions": [ "-k0" ]
+    },
+    {
+      "name": "xClangCL-Release-x64",
+      "configurePreset": "xClangCL-Release-x64",
+      "nativeToolOptions": [ "-k0" ]
+    }
+  ]
+}
