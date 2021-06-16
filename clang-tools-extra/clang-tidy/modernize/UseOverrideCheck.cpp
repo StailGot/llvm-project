@@ -217,15 +217,15 @@ void UseOverrideCheck::check(const MatchFinder::MatchResult &Result) {
         CharSourceRange::getTokenRange(OverrideLoc, OverrideLoc));
   }
 
-  if (HasVirtual) {
-    for (Token Tok : Tokens) {
-      if (Tok.is(tok::kw_virtual)) {
-        Diag << FixItHint::CreateRemoval(CharSourceRange::getTokenRange(
-            Tok.getLocation(), Tok.getLocation()));
-        break;
-      }
-    }
-  }
+  //if (HasVirtual) {
+  //  for (Token Tok : Tokens) {
+  //    if (Tok.is(tok::kw_virtual)) {
+  //      Diag << FixItHint::CreateRemoval(CharSourceRange::getTokenRange(
+  //          Tok.getLocation(), Tok.getLocation()));
+  //      break;
+  //    }
+  //  }
+  //}
 }
 
 } // namespace modernize
