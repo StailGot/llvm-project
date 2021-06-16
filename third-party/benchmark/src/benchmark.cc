@@ -215,7 +215,7 @@ State::State(std::string name, IterationCount max_iters,
 #pragma diag_suppress offset_in_non_POD_nonstandard
 #endif
   // Offset tests to ensure commonly accessed data is on the first cache line.
-  const int cache_line_size = 64;
+  constexpr int cache_line_size = 64;
   static_assert(
       offsetof(State, skipped_) <= (cache_line_size - sizeof(skipped_)), "");
 #if defined(__INTEL_COMPILER)
