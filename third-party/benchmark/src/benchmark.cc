@@ -168,7 +168,7 @@ State::State(IterationCount max_iters, const std::vector<int64_t>& ranges,
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
   // Offset tests to ensure commonly accessed data is on the first cache line.
-  const int cache_line_size = 64;
+  constexpr int cache_line_size = 64;
   static_assert(offsetof(State, error_occurred_) <=
                     (cache_line_size - sizeof(error_occurred_)),
                 "");
