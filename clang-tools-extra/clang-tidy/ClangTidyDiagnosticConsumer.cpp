@@ -545,17 +545,17 @@ void ClangTidyDiagnosticConsumer::checkFilters(SourceLocation Location,
   StringRef FileName(File->getName());
   LastErrorRelatesToUserCode = LastErrorRelatesToUserCode ||
                                Sources.isInMainFile(Location) ||
-                               getHeaderFilter()->match(FileName);
+                               std::regex_match(FileName.str(), *getHeaderFilter());
 
   unsigned LineNumber = Sources.getExpansionLineNumber(Location);
   LastErrorPassesLineFilter =
       LastErrorPassesLineFilter || passesLineFilter(FileName, LineNumber);
 }
 
-llvm::Regex *ClangTidyDiagnosticConsumer::getHeaderFilter() {
+std::regex *ClangTidyDiagnosticConsumer::getHeaderFilter() {
   if (!HeaderFilter)
     HeaderFilter =
-        std::make_unique<llvm::Regex>(*Context.getOptions().HeaderFilterRegex);
+        std::make_unique<std::regex>(*Context.getOptions().HeaderFilterRegex);
   return HeaderFilter.get();
 }
 
