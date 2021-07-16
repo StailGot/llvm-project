@@ -2856,6 +2856,13 @@ TEST_F(FormatTestComments, AlignTrailingComments) {
                "int a; //\n");
   verifyFormat("/**/   //\n"
                "int a; //\n");
+
+  // https://llvm.org/PR48280
+  EXPECT_EQ("int ab; // utf8 🐉\n"
+            "int a;  // line\n",
+            format("int ab; // long 🐉\n"
+                   "int a; // line\n",
+                   getLLVMStyleWithColumns(17)));
 }
 
 TEST_F(FormatTestComments, AlignsBlockCommentDecorations) {
