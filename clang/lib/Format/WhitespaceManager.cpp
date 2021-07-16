@@ -1131,8 +1131,8 @@ void WhitespaceManager::alignTrailingComments() {
       ChangeMaxColumn = ChangeMinColumn;
     else if (Style.ColumnLimit == 0)
       ChangeMaxColumn = INT_MAX;
-    else if (Style.ColumnLimit >= C.TokenLength)
-      ChangeMaxColumn = Style.ColumnLimit - C.TokenLength;
+    else if (Style.ColumnLimit >= C.EscapedNewlineColumn)
+      ChangeMaxColumn = Style.ColumnLimit - C.EscapedNewlineColumn;
     else
       ChangeMaxColumn = ChangeMinColumn;
 
