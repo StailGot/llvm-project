@@ -909,8 +909,8 @@ void WhitespaceManager::alignTrailingComments() {
 
     if (Style.ColumnLimit == 0)
       ChangeMaxColumn = UINT_MAX;
-    else if (Style.ColumnLimit >= Changes[i].TokenLength)
-      ChangeMaxColumn = Style.ColumnLimit - Changes[i].TokenLength;
+    else if (Style.ColumnLimit >= Changes[i].Tok->ColumnWidth)
+      ChangeMaxColumn = Style.ColumnLimit - Changes[i].Tok->ColumnWidth;
     else
       ChangeMaxColumn = ChangeMinColumn;
 
