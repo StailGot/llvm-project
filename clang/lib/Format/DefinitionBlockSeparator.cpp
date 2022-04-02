@@ -64,7 +64,7 @@ void DefinitionBlockSeparator::separateBlocks(
     return false;
   };
   unsigned NewlineCount =
-      (Style.SeparateDefinitionBlocks == FormatStyle::SDS_Always ? 1 : 0) + 1;
+      (Style.SeparateDefinitionBlocks == FormatStyle::SDS_Always ? 2 : 0) + 1;
   WhitespaceManager Whitespaces(
       Env.getSourceManager(), Style,
       Style.DeriveLineEnding
