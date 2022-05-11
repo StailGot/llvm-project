@@ -360,6 +360,7 @@ Clang-Tidy Checks
    :doc:`readability-magic-numbers <readability/magic-numbers>`,
    :doc:`readability-make-member-function-const <readability/make-member-function-const>`, "Yes"
    :doc:`readability-misleading-indentation <readability/misleading-indentation>`,
+   :doc:`readability-include-normalize <readability/include/normalize.html>`_, "Yes"
    :doc:`readability-misplaced-array-index <readability/misplaced-array-index>`, "Yes"
    :doc:`readability-named-parameter <readability/named-parameter>`, "Yes"
    :doc:`readability-non-const-parameter <readability/non-const-parameter>`, "Yes"
