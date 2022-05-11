@@ -333,6 +333,7 @@ Clang-Tidy Checks
    `readability-identifier-length <readability/identifier-length.html>`_,
    `readability-identifier-naming <readability/identifier-naming.html>`_, "Yes"
    `readability-implicit-bool-conversion <readability/implicit-bool-conversion.html>`_, "Yes"
+   `readability-include-normalize <readability/include/normalize.html>`_, "Yes"
    `readability-inconsistent-declaration-parameter-name <readability/inconsistent-declaration-parameter-name.html>`_, "Yes"
    `readability-isolate-declaration <readability/isolate-declaration.html>`_, "Yes"
    `readability-magic-numbers <readability/magic-numbers.html>`_,
