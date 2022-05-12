@@ -126,12 +126,13 @@ private:
 struct SymbolAndSignals {
   SymbolInfo Symbol;
   SymbolInfo::Signals Signals;
+  std::string SrcPath;
   bool operator==(const SymbolAndSignals& RHS) const;
 };
 
 /// Write SymbolInfos to a stream (YAML format).
 bool WriteSymbolInfosToStream(llvm::raw_ostream &OS,
-                              const SymbolInfo::SignalMap &Symbols);
+                              const SymbolInfo::SignalMap &Symbols, llvm::StringRef SrcPath);
 
 /// Read SymbolInfos from a YAML document.
 std::vector<SymbolAndSignals> ReadSymbolInfosFromYAML(llvm::StringRef Yaml);

@@ -71,7 +71,7 @@ public:
         OutputDir + "/" + llvm::sys::path::filename(FileName) + "-%%%%%%.yaml",
         FD, ResultPath);
     llvm::raw_fd_ostream OS(FD, /*shouldClose=*/true);
-    WriteSymbolInfosToStream(OS, Symbols);
+    WriteSymbolInfosToStream(OS, Symbols, FileName);
   }
 };
 
@@ -120,12 +120,12 @@ bool Merge(llvm::StringRef MergeDir, llvm::StringRef OutputFile) {
                  << '\n';
     return false;
   }
-  WriteSymbolInfosToStream(OS, Symbols);
+  WriteSymbolInfosToStream(OS, Symbols, "");
   return true;
 }
 
-} // namespace clang
 } // namespace find_all_symbols
+} // namespace clang
 
 int main(int argc, const char **argv) {
   auto ExpectedParser =

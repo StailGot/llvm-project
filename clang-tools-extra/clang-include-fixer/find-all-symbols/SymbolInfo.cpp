@@ -28,6 +28,7 @@ template <> struct MappingTraits<SymbolAndSignals> {
     io.mapRequired("Name", Symbol.Symbol.Name);
     io.mapRequired("Contexts", Symbol.Symbol.Contexts);
     io.mapRequired("FilePath", Symbol.Symbol.FilePath);
+    io.mapRequired("SrcPath", Symbol.SrcPath);
     io.mapRequired("Type", Symbol.Symbol.Type);
     io.mapRequired("Seen", Symbol.Signals.Seen);
     io.mapRequired("Used", Symbol.Signals.Used);
@@ -110,15 +111,18 @@ bool SymbolInfo::Signals::operator==(const Signals &RHS) const {
 }
 
 bool SymbolAndSignals::operator==(const SymbolAndSignals& RHS) const {
-  return std::tie(Symbol, Signals) == std::tie(RHS.Symbol, RHS.Signals);
+  return std::tie(Symbol, Signals, SrcPath) ==
+         std::tie(RHS.Symbol, RHS.Signals, RHS.SrcPath);
 }
 
 bool WriteSymbolInfosToStream(llvm::raw_ostream &OS,
-                              const SymbolInfo::SignalMap &Symbols) {
+                              const SymbolInfo::SignalMap &Symbols, llvm::StringRef SrcPath) {
   llvm::yaml::Output yout(OS);
   for (const auto &Symbol : Symbols) {
-    SymbolAndSignals S{Symbol.first, Symbol.second};
+    if (Symbol.second.Used > 0) {
+      SymbolAndSignals S{Symbol.first, Symbol.second, SrcPath.str()};
     yout << S;
+    }
   }
   return true;
 }
