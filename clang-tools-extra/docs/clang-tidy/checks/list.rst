@@ -244,6 +244,7 @@ Clang-Tidy Checks
    `misc-misleading-bidirectional <misc/misleading-bidirectional.html>`_,
    `misc-misleading-identifier <misc/misleading-identifier.html>`_,
    `misc-misplaced-const <misc/misplaced-const.html>`_,
+   `misc-modernize-legacy-types <misc/modernize/legacy/types.html>`_, "Yes"
    `misc-new-delete-overloads <misc/new-delete-overloads.html>`_,
    `misc-no-recursion <misc/no-recursion.html>`_,
    `misc-non-copyable-objects <misc/non-copyable-objects.html>`_,
