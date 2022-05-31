@@ -266,7 +266,8 @@ StatementMatcher makePseudoArrayLoopMatcher() {
       ));
 
   StatementMatcher SizeCallMatcher = cxxMemberCallExpr(
-      argumentCountIs(0), callee(cxxMethodDecl(hasAnyName("size", "length"))),
+      argumentCountIs(0),
+      callee(cxxMethodDecl(hasAnyName("size", "length", "Count"))),
       on(anyOf(hasType(pointsTo(RecordWithBeginEnd)),
                hasType(RecordWithBeginEnd))));
 
