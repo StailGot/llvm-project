@@ -2,7 +2,7 @@
   "version": 2,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 20,
+    "minor": 21,
     "patch": 0
   },
   "configurePresets": [
@@ -17,6 +17,10 @@
       },
       "architecture": {
         "value": "x64",
+        "strategy": "external"
+      },
+      "toolset": {
+        "value": "version=14.33",
         "strategy": "external"
       }
     },
@@ -49,7 +53,9 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "LLVM_INTEGRATED_CRT_ALLOC": "${sourceDir}/../../rpmalloc",
-        "LLVM_USE_CRT_RELEASE": "MT"
+        "LLVM_USE_CRT_RELEASE": "MT",
+        "CMAKE_C_FLAGS": "/GS-",
+        "CMAKE_CXX_FLAGS": "/GS-"
       }
     },
     {
@@ -64,7 +70,10 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "LLVM_INTEGRATED_CRT_ALLOC": "${sourceDir}/../../rpmalloc",
-        "LLVM_USE_CRT_RELEASE": "MT"
+        "LLVM_USE_CRT_RELEASE": "MT",
+        "LLVM_ENABLE_LTO": "Thin",
+        "CMAKE_C_FLAGS": "/GS- /clang:-march=x86-64-v2 /clang:-flto=thin /clang:-fwhole-program-vtables /clang:-Ofast",
+        "CMAKE_CXX_FLAGS": "/GS- /clang:-march=x86-64-v2 /clang:-flto=thin /clang:-fwhole-program-vtables /clang:-Ofast"
       }
     }
   ],
