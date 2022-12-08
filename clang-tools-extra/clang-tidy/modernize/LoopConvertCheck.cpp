@@ -266,7 +266,8 @@ StatementMatcher makePseudoArrayLoopMatcher() {
       ));
 
   StatementMatcher SizeCallMatcher = cxxMemberCallExpr(
-      argumentCountIs(0), callee(cxxMethodDecl(hasAnyName("size", "length"))),
+      argumentCountIs(0),
+      callee(cxxMethodDecl(hasAnyName("size", "length", "Count"))),
       on(anyOf(hasType(pointsTo(RecordWithBeginEnd)),
                hasType(RecordWithBeginEnd))));
 
@@ -692,7 +693,7 @@ StringRef LoopConvertCheck::getContainerString(ASTContext *Context,
   } else {
     // For CXXOperatorCallExpr such as vector_ptr->size() we want the class
     // object vector_ptr, but for vector[2] we need the whole expression.
-    if (const auto* E = dyn_cast<CXXOperatorCallExpr>(ContainerExpr))
+    if (const auto *E = dyn_cast<CXXOperatorCallExpr>(ContainerExpr))
       if (E->getOperator() != OO_Subscript)
         ContainerExpr = E->getArg(0);
     ContainerString =
