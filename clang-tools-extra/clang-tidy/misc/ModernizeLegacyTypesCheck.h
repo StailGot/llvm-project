@@ -10,6 +10,7 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_MODERNIZELEGACYTYPESCHECK_H
 
 #include "../ClangTidyCheck.h"
+#include "../utils/IncludeInserter.h"
 
 namespace clang {
 namespace tidy {
@@ -21,10 +22,21 @@ namespace misc {
 /// http://clang.llvm.org/extra/clang-tidy/checks/misc-modernize-legacy-types.html
 class ModernizeLegacyTypesCheck : public ClangTidyCheck {
 public:
-  ModernizeLegacyTypesCheck(StringRef Name, ClangTidyContext *Context)
-      : ClangTidyCheck(Name, Context) {}
+  ModernizeLegacyTypesCheck(StringRef Name, ClangTidyContext *Context);
+  void storeOptions(ClangTidyOptions::OptionMap &Opts) override;
+  bool isLanguageVersionSupported(const LangOptions &LangOpts) const override {
+    return LangOpts.CPlusPlus;
+  }
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
+  void registerPPCallbacks(const SourceManager &SM, Preprocessor *PP,
+                           Preprocessor *ModuleExpanderPP) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
+  llvm::Optional<TraversalKind> getCheckTraversalKind() const override {
+    return TK_IgnoreUnlessSpelledInSource;
+  }
+
+private:
+  utils::IncludeInserter Inserter;
 };
 
 } // namespace misc
