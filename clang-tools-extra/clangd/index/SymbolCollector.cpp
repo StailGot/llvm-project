@@ -1074,6 +1074,30 @@ void SymbolCollector::addDefinition(const NamedDecl &ND,
   Symbol S = DeclSym;
   // FIXME: use the result to filter out symbols.
   S.Definition = *DefLoc;
+
+  if (auto F = ND.getAsFunction())
+    if (auto B = F->getBody()) {
+      {
+        SymbolLocation Result;
+        static const char * empty = "";
+        Result.FileURI = empty;
+        auto Range = B->getSourceRange();
+
+        auto CreatePosition = [&SM](SourceLocation Loc) {
+          auto LSPLoc = sourceLocToPosition(SM, Loc);
+          SymbolLocation::Position Pos;
+          Pos.setLine(LSPLoc.line);
+          Pos.setColumn(LSPLoc.character);
+          return Pos;
+        };
+
+        Result.Start = CreatePosition(Range.getBegin());
+        Result.End = CreatePosition(Range.getEnd());
+
+        S.Body = Result;
+      }
+    }
+
   Symbols.insert(S);
 }
 
