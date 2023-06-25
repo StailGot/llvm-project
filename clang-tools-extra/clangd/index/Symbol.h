@@ -48,6 +48,7 @@ struct Symbol {
   /// The location of the symbol's definition, if one was found.
   /// This just covers the symbol name (e.g. without class/function body).
   SymbolLocation Definition;
+  SymbolLocation Body;
   /// The location of the preferred declaration of the symbol.
   /// This just covers the symbol name.
   /// This may be the same as Definition.
