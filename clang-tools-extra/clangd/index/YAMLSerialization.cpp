@@ -234,9 +234,11 @@ template <> struct MappingTraits<Symbol> {
     IO.mapRequired("Name", Sym.Name);
     IO.mapRequired("Scope", Sym.Scope);
     IO.mapRequired("SymInfo", Sym.SymInfo);
-    IO.mapOptional("CanonicalDeclaration", Sym.CanonicalDeclaration,
-                   SymbolLocation());
+    
+    IO.mapOptional("CanonicalDeclaration", Sym.CanonicalDeclaration, SymbolLocation());
     IO.mapOptional("Definition", Sym.Definition, SymbolLocation());
+    IO.mapOptional("Body", Sym.Body, SymbolLocation());
+
     IO.mapOptional("References", Sym.References, 0u);
     IO.mapOptional("Flags", NSymbolFlag->Flag);
     IO.mapOptional("Signature", Sym.Signature);
@@ -291,6 +293,8 @@ template <> struct ScalarEnumerationTraits<SymbolKind> {
     DEFINE_ENUM(ConversionFunction);
     DEFINE_ENUM(Parameter);
     DEFINE_ENUM(Using);
+
+    DEFINE_ENUM(Concept); /// C++20 concept.
 
 #undef DEFINE_ENUM
   }
