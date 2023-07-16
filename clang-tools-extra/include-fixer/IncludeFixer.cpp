@@ -149,36 +149,46 @@ public:
 
     if (FileType == SrcMgr::CharacteristicKind::C_User) {
 
-      if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
-        if (SM.isInMainFile(HashLoc) &&
-            (SrcFileName.contains("\\Source\\2D") ||
-             SrcFileName.contains("\\Source\\3D"))) {
+      // if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
+      //   if (SM.isInMainFile(HashLoc) &&
+      //       (SrcFileName.contains("\\Source\\2D") ||
+      //        SrcFileName.contains("\\Source\\3D")) &&
+      //       !SrcFileName.contains("\\ProtSys\\") &&
+      //       !SrcFileName.contains("\\Impl\\") && !FileName.contains("..") &&
+      //       !FileName.contains("\\Impl\\") &&
+      //       !SrcFileName.contains("\\RasterOut\\")) {
 
-          // llvm::outs() << FileName << "\n";
-          // llvm::outs() << SM.getFilename(FilenameRange.getBegin()) << "\n\n";
+      //    // llvm::outs() << FileName << "\n";
+      //    // llvm::outs() << SM.getFilename(FilenameRange.getBegin()) <<
+      //    "\n\n";
 
-          SmallString<512> path = SearchPath;
-          path += "/";
-          path += FileName;
+      //    SmallString<512> path = SearchPath;
+      //    path += "/";
+      //    path += FileName;
 
-          llvm::sys::fs::make_absolute(path);
-          path = llvm::sys::path::convert_to_slash(
-              path, llvm::sys::path::Style::windows_backslash);
-          path = path.substr(path.find("/Source/") + 8);
+      //    llvm::sys::fs::make_absolute(path);
+      //    path = llvm::sys::path::convert_to_slash(
+      //        path, llvm::sys::path::Style::windows_backslash);
 
-          const size_t offset =
-              path.startswith("2D/") || path.startswith("3D/") ? 3 : 0;
-          path = path.substr(offset);
+      //    if (auto pos = path.find("/Source/"); pos != -1) {
 
-          std::string Replacement = (llvm::Twine("<") + path + ">").str();
-          // std::string Replacement = (llvm::Twine("<") + path + ">").str();
+      //      path = path.substr(pos + 8);
 
-          if (FileName != path && !path.startswith("UI/Include/"))
-            DE.Report(FilenameRange.getBegin(), ID)
-                << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-                                                Replacement);
-        }
-      }
+      //      const size_t offset =
+      //          path.startswith("2D/") || path.startswith("3D/") ? 3 : 0;
+      //      path = path.substr(offset);
+
+      //      std::string Replacement = (llvm::Twine("<") + path + ">").str();
+      //      // std::string Replacement = (llvm::Twine("<") + path +
+      //      ">").str();
+
+      //      if (FileName != path && !path.startswith("UI/Include/"))
+      //        DE.Report(FilenameRange.getBegin(), ID)
+      //            << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
+      //                                            Replacement);
+      //    }
+      //  }
+      //}
 
       if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
 
