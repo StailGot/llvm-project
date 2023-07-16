@@ -30,6 +30,25 @@ using namespace clang::ast_matchers;
 using namespace clang;
 using namespace llvm;
 
+class XFixItOptions : public clang::FixItOptions {
+public:
+  XFixItOptions() {
+    InPlace = true;
+    // InPlace = false;
+    FixWhatYouCan = false;
+    FixOnlyWarnings = false;
+    Silent = false;
+  }
+
+  std::string RewriteFilename(const std::string &Filename, int &fd) override {
+    const auto NewFilename = Filename + ".fixed";
+    llvm::errs() << "Rewriting FixIts from " << Filename << " to "
+                 << NewFilename << "\n";
+    fd = -1;
+    return NewFilename;
+  }
+};
+
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
 public:
   void run(const MatchFinder::MatchResult &Result) override {
@@ -41,8 +60,9 @@ public:
         SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
             .getExpansion();
 
-    if (!Decl->getParent()->isLambda() && Decl->getCanonicalDecl() != Decl &&
-        !Expansion.isMacroArgExpansion() && !Expansion.isMacroBodyExpansion() &&
+    if (Decl->getParent() && !Decl->getParent()->isLambda() &&
+        Decl->getCanonicalDecl() != Decl && !Expansion.isMacroArgExpansion() &&
+        !Expansion.isMacroBodyExpansion() &&
         !Expansion.isFunctionMacroExpansion()) {
 
       auto &&SM = Result.SourceManager;
@@ -53,14 +73,14 @@ public:
             clang::DiagnosticsEngine::Warning, "No Comment!");
 
         std::string Code =
-            "//"
+            "\n//"
             "-----------------------------------------------------"
             "-------------------------\n/**\n  \n*/\n//---\n";
         DE.Report(Decl->getBeginLoc(), ID)
             << "Add " << Code
             << FixItHint::CreateInsertion(Decl->getBeginLoc(), Code);
 
-        llvm::outs() << Decl->getNameAsString() << "\n";
+        // llvm::outs() << Decl->getNameAsString() << "\n";
       }
     }
   }
@@ -74,11 +94,6 @@ public:
                                      isExpansionInMainFile())
                            .bind("fnDecl"),
                        &Handler);
-
-    // Matcher.addMatcher(declRefExpr().bind("declRef"), &Handler);
-    // Matcher.addMatcher(memberExpr().bind("memberRef"), &Handler);
-    // Matcher.addMatcher(cxxConstructExpr().bind("cxxConstructExpr"),
-    // &Handler);
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
@@ -97,6 +112,21 @@ public:
                                                  StringRef /*File*/) override {
     return std::make_unique<XASTConsumer>();
   }
+
+  bool BeginSourceFileAction(CompilerInstance &CI) override {
+    Preprocessor &PP = CI.getPreprocessor();
+
+    Rewriter = std::make_unique<clang::FixItRewriter>(
+        CI.getDiagnostics(), CI.getSourceManager(), CI.getLangOpts(), &Options);
+
+    return true;
+  }
+
+  void EndSourceFileAction() override { Rewriter->WriteFixedFiles(); }
+
+private:
+  std::unique_ptr<clang::FixItRewriter> Rewriter;
+  XFixItOptions Options;
 };
 
 class XFrontendActionFactory : public tooling::FrontendActionFactory {
@@ -106,28 +136,6 @@ public:
   }
 };
 
-// class XFixItOptions : public clang::FixItOptions {
-// public:
-//   XFixItOptions() {
-//     InPlace = true;
-//     // InPlace = false;
-//     FixWhatYouCan = false;
-//     FixOnlyWarnings = false;
-//     Silent = false;
-//   }
-//
-//   std::string RewriteFilename(const std::string &Filename, int &fd)
-//   override
-//   {
-//     const auto NewFilename = Filename + ".fixed";
-//     llvm::errs() << "Rewriting FixIts from " << Filename << " to "
-//                  << NewFilename << "\n";
-//     fd = -1;
-//     return NewFilename;
-//   }
-// };
-//
-// std::mutex Mutex;
 // llvm::StringSet VisitedHeaders;
 //
 // class Find_Includes : public PPCallbacks {
