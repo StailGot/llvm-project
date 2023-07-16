@@ -122,7 +122,9 @@ public:
     return true;
   }
 
-  void EndSourceFileAction() override { Rewriter->WriteFixedFiles(); }
+  void EndSourceFileAction() override {
+    // Rewriter->WriteFixedFiles();
+  }
 
 private:
   std::unique_ptr<clang::FixItRewriter> Rewriter;
