@@ -141,7 +141,7 @@ public:
 
     if (FileType == SrcMgr::CharacteristicKind::C_User) {
       if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName) &&
-          SM.getFilename(FilenameRange.getBegin()).ends_with(".cpp")) {
+          SM.isInMainFile(HashLoc)) {
 
         ++I;
 
@@ -149,8 +149,8 @@ public:
             (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
                 .str();
 
-        llvm::outs() << FileName << " " << Replacement << " "
-                     << FilenameRange.getAsRange().printToString(SM) << "\n";
+        // llvm::outs() << FileName << " " << Replacement << " "
+        //              << FilenameRange.getAsRange().printToString(SM) << "\n";
 
         const unsigned ID = DE.getCustomDiagID(
             clang::DiagnosticsEngine::Warning, "I findz a badness");
