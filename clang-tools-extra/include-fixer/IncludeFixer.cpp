@@ -120,6 +120,9 @@ public:
   }
 };
 
+std::mutex Mutex;
+llvm::StringSet VisitedHeaders;
+
 class Find_Includes : public PPCallbacks {
 private:
   SourceManager &SM;
@@ -140,31 +143,38 @@ public:
     llvm::sys::path::replace_extension(Src, ".h");
 
     if (FileType == SrcMgr::CharacteristicKind::C_User) {
-      if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName) &&
-          SM.isInMainFile(HashLoc)) {
 
-        ++I;
+      const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                             "Duplicated Include");
 
-        std::string Replacement =
-            (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
-                .str();
+      if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
 
-        // llvm::outs() << FileName << " " << Replacement << " "
-        //              << FilenameRange.getAsRange().printToString(SM) << "\n";
+        if (SM.isInMainFile(HashLoc)) {
+          ++I;
 
-        const unsigned ID = DE.getCustomDiagID(
-            clang::DiagnosticsEngine::Warning, "I findz a badness");
+          std::string Replacement =
+              (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
+                  .str();
 
-        if (I > 1)
-          DE.Report(FilenameRange.getBegin(), ID)
-              << SM.getFilename(FilenameRange.getBegin()) << Replacement
-              << FixItHint::CreateRemoval(
-                     clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-        else if (llvm::sys::path::filename(FileName) != FileName) {
-          DE.Report(FilenameRange.getBegin(), ID)
-              << SM.getFilename(FilenameRange.getBegin()) << Replacement
-              << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-                                              Replacement);
+          if (I > 1)
+            DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+          else if (llvm::sys::path::filename(FileName) != FileName) {
+            DE.Report(FilenameRange.getBegin(), ID)
+                << SM.getFilename(FilenameRange.getBegin()) << Replacement
+                << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
+                                                Replacement);
+          }
+        } else {
+          std::lock_guard lock(Mutex);
+
+          if (auto SrcInclude = SM.getFilename(FilenameRange.getBegin());
+              SrcInclude.ends_with(".h") &&
+              !VisitedHeaders.contains(SrcInclude)) {
+            VisitedHeaders.insert(SrcInclude);
+            DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+          }
         }
       }
     }
