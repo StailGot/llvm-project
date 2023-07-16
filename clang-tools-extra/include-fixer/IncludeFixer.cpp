@@ -101,9 +101,9 @@ using namespace llvm;
 //   }
 // };
 
-class MyFixItOptions : public clang::FixItOptions {
+class XFixItOptions : public clang::FixItOptions {
 public:
-  MyFixItOptions() {
+  XFixItOptions() {
     InPlace = true;
     // InPlace = false;
     FixWhatYouCan = false;
@@ -139,13 +139,46 @@ public:
                           StringRef RelativePath, const Module *Imported,
                           SrcMgr::CharacteristicKind FileType) override {
 
-    SmallString<512> Src = SM.getFilename(FilenameRange.getBegin());
+    const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                           "Incorrect Include Style");
+
+    auto SrcFileName = SM.getFilename(FilenameRange.getBegin());
+
+    SmallString<512> Src = SrcFileName;
     llvm::sys::path::replace_extension(Src, ".h");
 
     if (FileType == SrcMgr::CharacteristicKind::C_User) {
 
-      const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
-                                             "Duplicated Include");
+      if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
+        if (SM.isInMainFile(HashLoc) &&
+            (SrcFileName.contains("\\Source\\2D") ||
+             SrcFileName.contains("\\Source\\3D"))) {
+
+          // llvm::outs() << FileName << "\n";
+          // llvm::outs() << SM.getFilename(FilenameRange.getBegin()) << "\n\n";
+
+          SmallString<512> path = SearchPath;
+          path += "/";
+          path += FileName;
+
+          llvm::sys::fs::make_absolute(path);
+          path = llvm::sys::path::convert_to_slash(
+              path, llvm::sys::path::Style::windows_backslash);
+          path = path.substr(path.find("/Source/") + 8);
+
+          const size_t offset =
+              path.startswith("2D/") || path.startswith("3D/") ? 3 : 0;
+          path = path.substr(offset);
+
+          std::string Replacement = (llvm::Twine("<") + path + ">").str();
+          // std::string Replacement = (llvm::Twine("<") + path + ">").str();
+
+          if (FileName != path && !path.startswith("UI/Include/"))
+            DE.Report(FilenameRange.getBegin(), ID)
+                << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
+                                                Replacement);
+        }
+      }
 
       if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
 
@@ -161,7 +194,6 @@ public:
                 clang::SourceRange(HashLoc, FilenameRange.getEnd()));
           else if (llvm::sys::path::filename(FileName) != FileName) {
             DE.Report(FilenameRange.getBegin(), ID)
-                << SM.getFilename(FilenameRange.getBegin()) << Replacement
                 << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
                                                 Replacement);
           }
@@ -184,7 +216,7 @@ public:
 class Include_Matching_Action : public PreprocessOnlyAction {
 private:
   std::unique_ptr<clang::FixItRewriter> Rewriter;
-  MyFixItOptions Options;
+  XFixItOptions Options;
 
 private:
   bool BeginSourceFileAction(CompilerInstance &CI) override {
