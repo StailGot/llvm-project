@@ -31,6 +31,9 @@ using namespace clang::ast_matchers;
 using namespace clang;
 using namespace llvm;
 
+std::mutex MU;
+std::vector<tooling::TranslationUnitReplacements> TURs;
+
 class XFixItOptions : public clang::FixItOptions {
 public:
   XFixItOptions() {
@@ -128,19 +131,13 @@ public:
   bool BeginSourceFileAction(CompilerInstance &CI) override { return true; }
 
   void EndSourceFileAction() override {
-    // std::string ExportFixes = "C:\\dev\\_\\report.yaml";
-    // std::error_code EC;
-    // llvm::raw_fd_ostream OS(ExportFixes, EC, llvm::sys::fs::OF_None);
-
     tooling::TranslationUnitReplacements TUR;
 
     for (const auto &Entry : Replacements)
       TUR.Replacements.push_back(Entry);
 
-    yaml::Output YAML(llvm::outs());
-    // yaml::Output YAML(OS);
-    YAML << TUR;
-    // OS.close();
+    std::scoped_lock Lock{MU};
+    TURs.push_back(TUR);
   }
 
 private:
@@ -311,6 +308,20 @@ int main(int argc, const char **argv) {
 
   // auto Err =
   // Executor->get()->execute(newFrontendActionFactory<Include_Matching_Action>());
+
+  // tooling::Replacements Replacements;
+  tooling::TranslationUnitReplacements FinalTUR;
+
+  for (auto &TUR : TURs) {
+
+    FinalTUR.Replacements.insert(std::end(FinalTUR.Replacements),
+                                 std::begin(TUR.Replacements),
+                                 std::end(TUR.Replacements));
+    // yaml::Output YAML(llvm::outs());
+    // YAML << TUR;
+  }
+  yaml::Output YAML(llvm::outs());
+  YAML << FinalTUR;
 
   if (Err) {
     llvm::errs() << llvm::toString(std::move(Err)) << "\n";
