@@ -25,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <tuple>
 
 using namespace clang::tooling;
 using namespace clang::ast_matchers;
@@ -41,6 +42,62 @@ std::string_view FunctionDefCommentHeader =
     "-----------------------------------------------------"
     "-------------------------\n/**\n  \n*/\n//---\n";
 
+std::string NormalizeFilePath(const std::string &path) {
+  llvm::SmallString<128> normalized(path);
+  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
+
+  // Canonicalize directory separators (forward slashes considered canonical.)
+  std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+  return normalized.str().str();
+}
+
+tooling::Replacement
+CreateReplacementFromSourceLocation(const SourceManager &Sources,
+                                    SourceLocation Start, unsigned Length,
+                                    StringRef ReplacementText) {
+  const auto &&[FileID, Offset] = Sources.getDecomposedLoc(Start);
+  const FileEntry *Entry = Sources.getFileEntryForID(FileID);
+  auto FilePath =
+      std::string(Entry ? NormalizeFilePath(Entry->getName().str()) : "");
+  // auto ReplacementRange = Range(Offset, Length);
+  // auto ReplacementText = std::string(ReplacementText);
+
+  return Replacement{FilePath, Offset, Length, ReplacementText};
+}
+
+tooling::TranslationUnitReplacements MergeReplacements(
+    const std::vector<tooling::TranslationUnitReplacements> &TURs) {
+  tooling::TranslationUnitReplacements Result;
+
+  for (auto &TUR : TURs) {
+
+    Result.Replacements.insert(std::end(Result.Replacements),
+                               std::begin(TUR.Replacements),
+                               std::end(TUR.Replacements));
+  }
+
+  std::sort(std::begin(Result.Replacements), std::end(Result.Replacements),
+            [](const Replacement &lhs, const Replacement &rhs) {
+              return std::tuple{lhs.getFilePath(), lhs.getOffset(),
+                                lhs.getLength()} <=
+                     std::tuple{rhs.getFilePath(), rhs.getOffset(),
+                                rhs.getLength()};
+            });
+  Result.Replacements.erase(
+      std::unique(std::begin(Result.Replacements),
+                  std::end(Result.Replacements),
+                  [](const Replacement &lhs, const Replacement &rhs) {
+                    return std::tuple{lhs.getFilePath(), lhs.getOffset(),
+                                      lhs.getLength()} ==
+                           std::tuple{rhs.getFilePath(), rhs.getOffset(),
+                                      rhs.getLength()};
+                  }),
+      std::end(Result.Replacements));
+
+  return Result;
+}
+
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
 public:
   FunctionDeclMatchHandler(ReplacementsMap &Replacements)
@@ -51,10 +108,9 @@ public:
 
     auto &&SM = Result.SourceManager;
 
-    if (llvm::SmallString<512> FileName = SM->getFilename(Decl->getBeginLoc());
+    if (std::string FileName =
+            NormalizeFilePath(SM->getFilename(Decl->getBeginLoc()).str());
         !std::empty(FileName)) {
-      llvm::sys::path::remove_dots(FileName);
-      FileName = llvm::sys::path::convert_to_slash(FileName);
 
       auto Expansion =
           SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
@@ -83,8 +139,12 @@ public:
               << FixItHint::CreateInsertion(Decl->getBeginLoc(),
                                             FunctionDefCommentHeader);
 
-          Replacements[FileName.c_str()].add(Replacement(
-              *SM, Decl->getBeginLoc(), 0, FunctionDefCommentHeader));
+          Replacements[FileName.c_str()].add(
+              CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(), 0,
+                                                  FunctionDefCommentHeader));
+
+          // Replacements[FileName.c_str()].add(Replacement(
+          //     *SM, Decl->getBeginLoc(), 0, FunctionDefCommentHeader));
         }
       }
     }
@@ -131,8 +191,9 @@ public:
     tooling::TranslationUnitReplacements TUR;
 
     for (const auto &[Key, Value] : Replacements)
-      for (const auto &Entry : Value)
+      for (const auto &Entry : Value) {
         TUR.Replacements.push_back(Entry);
+      }
 
     std::scoped_lock Lock{MU};
     TURs.push_back(TUR);
@@ -307,22 +368,9 @@ int main(int argc, const char **argv) {
   // auto Err =
   // Executor->get()->execute(newFrontendActionFactory<Include_Matching_Action>());
 
-  tooling::TranslationUnitReplacements FinalTUR;
-
-  for (auto &TUR : TURs) {
-
-    FinalTUR.Replacements.insert(std::end(FinalTUR.Replacements),
-                                 std::begin(TUR.Replacements),
-                                 std::end(TUR.Replacements));
-  }
+  tooling::TranslationUnitReplacements TUR = MergeReplacements(TURs);
   yaml::Output YAML(llvm::outs());
-
-  std::sort(std::begin(FinalTUR.Replacements), std::end(FinalTUR.Replacements));
-  FinalTUR.Replacements.erase(std::unique(std::begin(FinalTUR.Replacements),
-                                          std::end(FinalTUR.Replacements)),
-                              std::end(FinalTUR.Replacements));
-
-  YAML << FinalTUR;
+  YAML << TUR;
 
   if (Err) {
     llvm::errs() << llvm::toString(std::move(Err)) << "\n";
