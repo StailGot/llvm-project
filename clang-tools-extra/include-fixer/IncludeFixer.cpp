@@ -52,6 +52,9 @@ public:
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
 public:
+  FunctionDeclMatchHandler(tooling::Replacements &Replacements)
+      : Replacements{Replacements} {}
+
   void run(const MatchFinder::MatchResult &Result) override {
     auto Decl = Result.Nodes.getNodeAs<clang::CXXMethodDecl>("fnDecl");
 
@@ -66,7 +69,7 @@ public:
         !Expansion.isMacroBodyExpansion() &&
         !Expansion.isFunctionMacroExpansion()) {
 
-      // auto &&SM = Result.SourceManager;
+      auto &&SM = Result.SourceManager;
 
       if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
         auto &&DE = Result.SourceManager->getDiagnostics();
@@ -82,14 +85,20 @@ public:
             << FixItHint::CreateInsertion(Decl->getBeginLoc(), Code);
 
         // llvm::outs() << Decl->getNameAsString() << "\n";
+
+        Replacements.add(Replacement(*SM, Decl->getBeginLoc(), 0, Code));
       }
     }
   }
+
+private:
+  tooling::Replacements &Replacements;
 };
 
 class XASTConsumer : public ASTConsumer {
 public:
-  XASTConsumer() {
+  XASTConsumer(tooling::Replacements &Replacements)
+      : Replacements{Replacements}, Handler{Replacements} {
 
     Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
                                      isExpansionInMainFile())
@@ -104,6 +113,7 @@ public:
 private:
   FunctionDeclMatchHandler Handler;
   MatchFinder Matcher;
+  tooling::Replacements &Replacements;
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
@@ -112,29 +122,29 @@ class XFrontendAction : public ASTFrontendAction {
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
-    return std::make_unique<XASTConsumer>();
+    return std::make_unique<XASTConsumer>(Replacements);
   }
 
-  bool BeginSourceFileAction(CompilerInstance &CI) override {
-    // Preprocessor &PP = CI.getPreprocessor();
-    // TUR.Replacements.
-
-    // Replacement.
-
-    Rewriter = std::make_unique<clang::FixItRewriter>(
-        CI.getDiagnostics(), CI.getSourceManager(), CI.getLangOpts(), &Options);
-
-    return true;
-  }
+  bool BeginSourceFileAction(CompilerInstance &CI) override { return true; }
 
   void EndSourceFileAction() override {
-    // Rewriter->WriteFixedFiles();
+    // std::string ExportFixes = "C:\\dev\\_\\report.yaml";
+    // std::error_code EC;
+    // llvm::raw_fd_ostream OS(ExportFixes, EC, llvm::sys::fs::OF_None);
+
+    tooling::TranslationUnitReplacements TUR;
+
+    for (const auto &Entry : Replacements)
+      TUR.Replacements.push_back(Entry);
+
+    yaml::Output YAML(llvm::outs());
+    // yaml::Output YAML(OS);
+    YAML << TUR;
+    // OS.close();
   }
 
 private:
-  tooling::Replacement Replacement;
-  // tooling::TranslationUnitReplacements TUR;
-  std::unique_ptr<clang::FixItRewriter> Rewriter;
+  tooling::Replacements Replacements;
   XFixItOptions Options;
 };
 
