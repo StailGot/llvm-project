@@ -14,6 +14,7 @@
 #include "clang/Tooling/AllTUsExecution.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Execution.h"
+#include "clang/Tooling/ReplacementsYaml.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -65,7 +66,7 @@ public:
         !Expansion.isMacroBodyExpansion() &&
         !Expansion.isFunctionMacroExpansion()) {
 
-      auto &&SM = Result.SourceManager;
+      // auto &&SM = Result.SourceManager;
 
       if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
         auto &&DE = Result.SourceManager->getDiagnostics();
@@ -97,7 +98,7 @@ public:
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
-    Matcher.matchAST(Context);
+    // Matcher.matchAST(Context);
   }
 
 private:
@@ -108,13 +109,13 @@ private:
 // For each source file provided to the tool, a new FrontendAction is created.
 class XFrontendAction : public ASTFrontendAction {
 public:
-  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance & /*CI*/,
-                                                 StringRef /*File*/) override {
+  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+                                                 StringRef File) override {
     return std::make_unique<XASTConsumer>();
   }
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
-    Preprocessor &PP = CI.getPreprocessor();
+    // Preprocessor &PP = CI.getPreprocessor();
 
     Rewriter = std::make_unique<clang::FixItRewriter>(
         CI.getDiagnostics(), CI.getSourceManager(), CI.getLangOpts(), &Options);
@@ -122,7 +123,9 @@ public:
     return true;
   }
 
-  void EndSourceFileAction() override { Rewriter->WriteFixedFiles(); }
+  void EndSourceFileAction() override {
+    // Rewriter->WriteFixedFiles();
+  }
 
 private:
   std::unique_ptr<clang::FixItRewriter> Rewriter;
