@@ -34,28 +34,16 @@ using namespace llvm;
 std::mutex MU;
 std::vector<tooling::TranslationUnitReplacements> TURs;
 
-class XFixItOptions : public clang::FixItOptions {
-public:
-  XFixItOptions() {
-    InPlace = true;
-    // InPlace = false;
-    FixWhatYouCan = false;
-    FixOnlyWarnings = false;
-    Silent = false;
-  }
+using ReplacementsMap = std::map<std::string, tooling::Replacements>;
 
-  std::string RewriteFilename(const std::string &Filename, int &fd) override {
-    const auto NewFilename = Filename + ".fixed";
-    llvm::errs() << "Rewriting FixIts from " << Filename << " to "
-                 << NewFilename << "\n";
-    fd = -1;
-    return NewFilename;
-  }
-};
+std::string_view FunctionDefCommentHeader =
+    "\n//"
+    "-----------------------------------------------------"
+    "-------------------------\n/**\n  \n*/\n//---\n";
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
 public:
-  FunctionDeclMatchHandler(tooling::Replacements &Replacements)
+  FunctionDeclMatchHandler(ReplacementsMap &Replacements)
       : Replacements{Replacements} {}
 
   void run(const MatchFinder::MatchResult &Result) override {
@@ -63,48 +51,57 @@ public:
 
     auto &&SM = Result.SourceManager;
 
-    auto Expansion =
-        SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
-            .getExpansion();
+    if (llvm::SmallString<512> FileName = SM->getFilename(Decl->getBeginLoc());
+        !std::empty(FileName)) {
+      llvm::sys::path::remove_dots(FileName);
+      FileName = llvm::sys::path::convert_to_slash(FileName);
 
-    if (Decl->getParent() && !Decl->getParent()->isLambda() &&
-        Decl->getCanonicalDecl() != Decl && !Expansion.isMacroArgExpansion() &&
-        !Expansion.isMacroBodyExpansion() &&
-        !Expansion.isFunctionMacroExpansion()) {
+      auto Expansion =
+          SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
+              .getExpansion();
 
-      auto &&SM = Result.SourceManager;
+      // if (Decl->getParent() && !Decl->getParent()->isLambda() &&
+      //     Decl->getCanonicalDecl() != Decl)
 
-      if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
-        auto &&DE = Result.SourceManager->getDiagnostics();
-        const unsigned ID = DE.getCustomDiagID(
-            clang::DiagnosticsEngine::Warning, "No Comment!");
+      if (Decl->getParent() && !Decl->getParent()->isLambda() &&
+          Decl->getCanonicalDecl() != Decl &&
+          !Expansion.isMacroArgExpansion() // &&
+          //! Expansion.isMacroBodyExpansion() &&
+          //! Expansion.isFunctionMacroExpansion()
+      ) {
 
-        std::string Code =
-            "\n//"
-            "-----------------------------------------------------"
-            "-------------------------\n/**\n  \n*/\n//---\n";
-        DE.Report(Decl->getBeginLoc(), ID)
-            << "Add " << Code
-            << FixItHint::CreateInsertion(Decl->getBeginLoc(), Code);
+        // llvm::errs() << FileName << " " << Decl->getQualifiedNameAsString()
+        //              << "\n";
 
-        // llvm::outs() << Decl->getNameAsString() << "\n";
+        if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
+          auto &&DE = Result.SourceManager->getDiagnostics();
+          const unsigned ID = DE.getCustomDiagID(
+              clang::DiagnosticsEngine::Warning, "No Comment!");
 
-        Replacements.add(Replacement(*SM, Decl->getBeginLoc(), 0, Code));
+          DE.Report(Decl->getBeginLoc(), ID)
+              << "Add " << FunctionDefCommentHeader
+              << FixItHint::CreateInsertion(Decl->getBeginLoc(),
+                                            FunctionDefCommentHeader);
+
+          Replacements[FileName.c_str()].add(Replacement(
+              *SM, Decl->getBeginLoc(), 0, FunctionDefCommentHeader));
+        }
       }
     }
   }
 
 private:
-  tooling::Replacements &Replacements;
+  ReplacementsMap &Replacements;
 };
 
 class XASTConsumer : public ASTConsumer {
 public:
-  XASTConsumer(tooling::Replacements &Replacements)
+  XASTConsumer(ReplacementsMap &Replacements)
       : Replacements{Replacements}, Handler{Replacements} {
 
     Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
-                                     isExpansionInMainFile())
+                                     // isExpansionInMainFile(),
+                                     unless(isExpansionInSystemHeader()))
                            .bind("fnDecl"),
                        &Handler);
   }
@@ -116,7 +113,7 @@ public:
 private:
   FunctionDeclMatchHandler Handler;
   MatchFinder Matcher;
-  tooling::Replacements &Replacements;
+  ReplacementsMap &Replacements;
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
@@ -133,16 +130,17 @@ public:
   void EndSourceFileAction() override {
     tooling::TranslationUnitReplacements TUR;
 
-    for (const auto &Entry : Replacements)
-      TUR.Replacements.push_back(Entry);
+    for (const auto &[Key, Value] : Replacements)
+      for (const auto &Entry : Value)
+        TUR.Replacements.push_back(Entry);
 
     std::scoped_lock Lock{MU};
     TURs.push_back(TUR);
   }
 
 private:
-  tooling::Replacements Replacements;
-  XFixItOptions Options;
+  ReplacementsMap Replacements;
+  // XFixItOptions Options;
 };
 
 class XFrontendActionFactory : public tooling::FrontendActionFactory {
@@ -309,7 +307,6 @@ int main(int argc, const char **argv) {
   // auto Err =
   // Executor->get()->execute(newFrontendActionFactory<Include_Matching_Action>());
 
-  // tooling::Replacements Replacements;
   tooling::TranslationUnitReplacements FinalTUR;
 
   for (auto &TUR : TURs) {
@@ -317,10 +314,14 @@ int main(int argc, const char **argv) {
     FinalTUR.Replacements.insert(std::end(FinalTUR.Replacements),
                                  std::begin(TUR.Replacements),
                                  std::end(TUR.Replacements));
-    // yaml::Output YAML(llvm::outs());
-    // YAML << TUR;
   }
   yaml::Output YAML(llvm::outs());
+
+  std::sort(std::begin(FinalTUR.Replacements), std::end(FinalTUR.Replacements));
+  FinalTUR.Replacements.erase(std::unique(std::begin(FinalTUR.Replacements),
+                                          std::end(FinalTUR.Replacements)),
+                              std::end(FinalTUR.Replacements));
+
   YAML << FinalTUR;
 
   if (Err) {
