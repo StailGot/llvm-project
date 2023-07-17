@@ -60,9 +60,6 @@ CreateReplacementFromSourceLocation(const SourceManager &Sources,
   const FileEntry *Entry = Sources.getFileEntryForID(FileID);
   auto FilePath =
       std::string(Entry ? NormalizeFilePath(Entry->getName().str()) : "");
-  // auto ReplacementRange = Range(Offset, Length);
-  // auto ReplacementText = std::string(ReplacementText);
-
   return Replacement{FilePath, Offset, Length, ReplacementText};
 }
 
@@ -84,6 +81,7 @@ tooling::TranslationUnitReplacements MergeReplacements(
                      std::tuple{rhs.getFilePath(), rhs.getOffset(),
                                 rhs.getLength()};
             });
+
   Result.Replacements.erase(
       std::unique(std::begin(Result.Replacements),
                   std::end(Result.Replacements),
