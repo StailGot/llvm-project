@@ -98,7 +98,7 @@ public:
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
-    // Matcher.matchAST(Context);
+    Matcher.matchAST(Context);
   }
 
 private:
@@ -108,6 +108,7 @@ private:
 
 // For each source file provided to the tool, a new FrontendAction is created.
 class XFrontendAction : public ASTFrontendAction {
+
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
@@ -116,6 +117,9 @@ public:
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
     // Preprocessor &PP = CI.getPreprocessor();
+    // TUR.Replacements.
+
+    // Replacement.
 
     Rewriter = std::make_unique<clang::FixItRewriter>(
         CI.getDiagnostics(), CI.getSourceManager(), CI.getLangOpts(), &Options);
@@ -128,6 +132,8 @@ public:
   }
 
 private:
+  tooling::Replacement Replacement;
+  // tooling::TranslationUnitReplacements TUR;
   std::unique_ptr<clang::FixItRewriter> Rewriter;
   XFixItOptions Options;
 };
