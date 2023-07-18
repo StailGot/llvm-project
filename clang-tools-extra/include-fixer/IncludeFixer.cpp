@@ -246,7 +246,7 @@ public:
 
       //      Replacements[SrcFileName.str()].add(
       //          CreateReplacementFromSourceLocation(
-      //              SM, FilenameRange.getBegin(), 0, Replacement));
+      //              SM, FilenameRange.getBegin(), GetRangeSize(SM, FilenameRange, CI.getLangOpts()), Replacement));
       //    }
       //  }
       //}
