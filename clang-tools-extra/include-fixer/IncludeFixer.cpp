@@ -115,8 +115,8 @@ tooling::TranslationUnitReplacements MergeReplacements(
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
 public:
-  FunctionDeclMatchHandler(ReplacementsMap &Replacements)
-      : Replacements{Replacements} {}
+  FunctionDeclMatchHandler(ReplacementsMap &Replacements, CompilerInstance &CI)
+      : Replacements{Replacements}, CI{CI} {}
 
   void run(const MatchFinder::MatchResult &Result) override {
     auto Decl = Result.Nodes.getNodeAs<clang::CXXMethodDecl>("fnDecl");
@@ -151,13 +151,21 @@ public:
 
           llvm::errs() << Decl->getNameAsString() << "\n";
         } else {
-          auto Comment =
-              Result.Context->getRawCommentForDeclNoCache(Decl)->getRawText(
-                  *SM);
+          auto RawComment = Result.Context->getRawCommentForDeclNoCache(Decl);
+          auto Comment = RawComment->getRawText(*SM);
 
-          if (!Comment.contains("/**"))
+          if (!Comment.contains("/**")) {
             llvm::errs() << Comment << "\n"
                          << Decl->getNameAsString() << "\n\n";
+
+            auto Range =
+                CharSourceRange::getTokenRange(RawComment->getSourceRange());
+
+            Replacements[FileName.c_str()].add(
+                CreateReplacementFromSourceLocation(
+                    *SM, RawComment->getBeginLoc(),
+                    GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
+          }
         }
       }
     }
@@ -165,15 +173,15 @@ public:
 
 private:
   ReplacementsMap &Replacements;
+  CompilerInstance &CI;
 };
 
 class XASTConsumer : public ASTConsumer {
 public:
-  XASTConsumer(ReplacementsMap &Replacements)
-      : Replacements{Replacements}, Handler{Replacements} {
+  XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
+      : Replacements{Replacements}, Handler{Replacements, CI} {
 
     Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
-                                     // isExpansionInMainFile(),
                                      unless(isExpansionInSystemHeader()))
                            .bind("fnDecl"),
                        &Handler);
@@ -321,7 +329,7 @@ class XFrontendAction : public ASTFrontendAction {
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
-    return std::make_unique<XASTConsumer>(Replacements);
+    return std::make_unique<XASTConsumer>(Replacements, CI);
   }
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
