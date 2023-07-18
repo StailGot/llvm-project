@@ -65,6 +65,10 @@ std::string NormalizeFilePath(const std::string &path) {
   return normalized.str().str();
 }
 
+bool IsAssociatedInclude(std::string_view Src, std::string_view Include) {
+  return llvm::sys::fs::equivalent(Src, Include);
+}
+
 tooling::Replacement
 CreateReplacementFromSourceLocation(const SourceManager &Sources,
                                     SourceLocation Start, unsigned Length,
@@ -280,16 +284,20 @@ public:
                       Replacement));
             }
           }
+
         } else {
-          DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
-              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+          if (!SrcFileName.ends_with(".cpp")) {
+            DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
 
-          auto Range = CharSourceRange::getTokenRange(
-              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+            auto Range = CharSourceRange::getTokenRange(
+                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
 
-          Replacements[SrcFileName.str()].add(
-              CreateReplacementFromSourceLocation(
-                  SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()), ""));
+            Replacements[SrcFileName.str()].add(
+                CreateReplacementFromSourceLocation(
+                    SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()),
+                    ""));
+          }
         }
       }
     }
