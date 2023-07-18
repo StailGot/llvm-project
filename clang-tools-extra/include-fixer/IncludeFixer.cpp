@@ -131,15 +131,9 @@ public:
           SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
               .getExpansion();
 
-      // if (Decl->getParent() && !Decl->getParent()->isLambda() &&
-      //     Decl->getCanonicalDecl() != Decl)
-
       if (Decl->getParent() && !Decl->getParent()->isLambda() &&
           Decl->getCanonicalDecl() != Decl &&
-          !Expansion.isMacroArgExpansion() // &&
-          //! Expansion.isMacroBodyExpansion() &&
-          //! Expansion.isFunctionMacroExpansion()
-      ) {
+          !Expansion.isMacroArgExpansion()) {
 
         if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
           auto &&DE = Result.SourceManager->getDiagnostics();
@@ -154,6 +148,16 @@ public:
           Replacements[FileName.c_str()].add(
               CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(), 0,
                                                   FunctionDefCommentHeader));
+
+          llvm::errs() << Decl->getNameAsString() << "\n";
+        } else {
+          auto Comment =
+              Result.Context->getRawCommentForDeclNoCache(Decl)->getRawText(
+                  *SM);
+
+          if (!Comment.contains("/**"))
+            llvm::errs() << Comment << "\n"
+                         << Decl->getNameAsString() << "\n\n";
         }
       }
     }
@@ -321,6 +325,8 @@ public:
   }
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
+
+    CI.getLangOpts().CommentOpts.ParseAllComments = true;
 
     Preprocessor &PP = CI.getPreprocessor();
     PP.addPPCallbacks(std::make_unique<Find_Includes>(CI, Replacements));
