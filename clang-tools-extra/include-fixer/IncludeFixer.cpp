@@ -42,6 +42,19 @@ std::string_view FunctionDefCommentHeader =
     "-----------------------------------------------------"
     "-------------------------\n/**\n  \n*/\n//---\n";
 
+int GetRangeSize(const SourceManager &Sources, const CharSourceRange &Range,
+                 const LangOptions &LangOpts) {
+  SourceLocation SpellingBegin = Sources.getSpellingLoc(Range.getBegin());
+  SourceLocation SpellingEnd = Sources.getSpellingLoc(Range.getEnd());
+  std::pair<FileID, unsigned> Start = Sources.getDecomposedLoc(SpellingBegin);
+  std::pair<FileID, unsigned> End = Sources.getDecomposedLoc(SpellingEnd);
+  if (Start.first != End.first)
+    return -1;
+  if (Range.isTokenRange())
+    End.second += Lexer::MeasureTokenLength(SpellingEnd, Sources, LangOpts);
+  return End.second - Start.second;
+}
+
 std::string NormalizeFilePath(const std::string &path) {
   llvm::SmallString<128> normalized(path);
   llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
@@ -124,9 +137,6 @@ public:
           //! Expansion.isFunctionMacroExpansion()
       ) {
 
-        // llvm::errs() << FileName << " " << Decl->getQualifiedNameAsString()
-        //              << "\n";
-
         if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
           auto &&DE = Result.SourceManager->getDiagnostics();
           const unsigned ID = DE.getCustomDiagID(
@@ -140,9 +150,6 @@ public:
           Replacements[FileName.c_str()].add(
               CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(), 0,
                                                   FunctionDefCommentHeader));
-
-          // Replacements[FileName.c_str()].add(Replacement(
-          //     *SM, Decl->getBeginLoc(), 0, FunctionDefCommentHeader));
         }
       }
     }
@@ -174,8 +181,129 @@ private:
   ReplacementsMap &Replacements;
 };
 
+class Find_Includes : public PPCallbacks {
+public:
+  Find_Includes(CompilerInstance &CI, ReplacementsMap &Replacements)
+      : CI{CI}, Replacements{Replacements} {}
+
+  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
+                          StringRef FileName, bool IsAngled,
+                          CharSourceRange FilenameRange,
+                          OptionalFileEntryRef File, StringRef SearchPath,
+                          StringRef RelativePath, const Module *Imported,
+                          SrcMgr::CharacteristicKind FileType) override {
+
+    auto &DE = CI.getDiagnostics();
+    auto &SM = CI.getSourceManager();
+
+    const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                           "Incorrect Include Style");
+
+    auto SrcFileName = SM.getFilename(FilenameRange.getBegin());
+
+    SmallString<512> Src = SrcFileName;
+    llvm::sys::path::replace_extension(Src, ".h");
+
+    SrcFileName = NormalizeFilePath(SrcFileName.str()).c_str();
+
+    if (FileType == SrcMgr::CharacteristicKind::C_User) {
+
+      // if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
+      //   if (SM.isInMainFile(HashLoc) &&
+      //       (SrcFileName.contains("\\Source\\2D") ||
+      //        SrcFileName.contains("\\Source\\3D")) &&
+      //       !SrcFileName.contains("\\ProtSys\\") &&
+      //       !SrcFileName.contains("\\Impl\\") && !FileName.contains("..") &&
+      //       !FileName.contains("\\Impl\\") &&
+      //       !SrcFileName.contains("\\RasterOut\\")) {
+
+      //    SmallString<512> path = SearchPath;
+      //    path += "/";
+      //    path += FileName;
+
+      //    llvm::sys::fs::make_absolute(path);
+      //    path = llvm::sys::path::convert_to_slash(
+      //        path, llvm::sys::path::Style::windows_backslash);
+
+      //    if (auto pos = path.find("/Source/"); pos != -1) {
+
+      //      path = path.substr(pos + 8);
+
+      //      const size_t offset =
+      //          path.startswith("2D/") || path.startswith("3D/") ? 3 : 0;
+      //      path = path.substr(offset);
+
+      //      std::string Replacement = (llvm::Twine("<") + path + ">").str();
+
+      //      if (FileName != path && !path.startswith("UI/Include/"))
+      //        DE.Report(FilenameRange.getBegin(), ID)
+      //            << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
+      //                                            Replacement);
+
+      //      Replacements[SrcFileName.str()].add(
+      //          CreateReplacementFromSourceLocation(
+      //              SM, FilenameRange.getBegin(), 0, Replacement));
+      //    }
+      //  }
+      //}
+
+      if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
+        if (SM.isInMainFile(HashLoc)) {
+          ++I;
+
+          std::string Replacement =
+              (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
+                  .str();
+
+          if (I > 1) {
+            DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+
+            auto Range = CharSourceRange::getTokenRange(
+                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+
+            Replacements[SrcFileName.str()].add(
+                CreateReplacementFromSourceLocation(
+                    SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()),
+                    ""));
+
+          } else if (llvm::sys::path::filename(FileName) != FileName) {
+            {
+              DE.Report(FilenameRange.getBegin(), ID)
+                  << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
+                                                  Replacement);
+
+              Replacements[SrcFileName.str()].add(
+                  CreateReplacementFromSourceLocation(
+                      SM, FilenameRange.getBegin(),
+                      GetRangeSize(SM, FilenameRange, CI.getLangOpts()),
+                      Replacement));
+            }
+          }
+        } else {
+          DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+
+          auto Range = CharSourceRange::getTokenRange(
+              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+
+          Replacements[SrcFileName.str()].add(
+              CreateReplacementFromSourceLocation(
+                  SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()), ""));
+        }
+      }
+    }
+  }
+
+private:
+  CompilerInstance &CI;
+  ReplacementsMap &Replacements;
+  size_t I = 0;
+};
+
 // For each source file provided to the tool, a new FrontendAction is created.
-class XFrontendAction : public ASTFrontendAction {
+// class XFrontendAction : public ASTFrontendAction {
+class XFrontendAction : public PreprocessOnlyAction {
 
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
@@ -183,7 +311,13 @@ public:
     return std::make_unique<XASTConsumer>(Replacements);
   }
 
-  bool BeginSourceFileAction(CompilerInstance &CI) override { return true; }
+  bool BeginSourceFileAction(CompilerInstance &CI) override {
+
+    Preprocessor &PP = CI.getPreprocessor();
+
+    PP.addPPCallbacks(std::make_unique<Find_Includes>(CI, Replacements));
+    return true;
+  }
 
   void EndSourceFileAction() override {
     tooling::TranslationUnitReplacements TUR;
@@ -197,9 +331,10 @@ public:
     TURs.push_back(TUR);
   }
 
+  bool usesPreprocessorOnly() const override { return true; }
+
 private:
   ReplacementsMap Replacements;
-  // XFixItOptions Options;
 };
 
 class XFrontendActionFactory : public tooling::FrontendActionFactory {
@@ -208,139 +343,6 @@ public:
     return std::make_unique<XFrontendAction>();
   }
 };
-
-// llvm::StringSet VisitedHeaders;
-//
-// class Find_Includes : public PPCallbacks {
-// private:
-//   SourceManager &SM;
-//   DiagnosticsEngine &DE;
-//   size_t I = 0;
-//
-// public:
-//   Find_Includes(SourceManager &SM, DiagnosticsEngine &DE) : SM{SM}, DE{DE}
-//   {}
-//
-//   void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
-//                           StringRef FileName, bool IsAngled,
-//                           CharSourceRange FilenameRange,
-//                           OptionalFileEntryRef File, StringRef SearchPath,
-//                           StringRef RelativePath, const Module *Imported,
-//                           SrcMgr::CharacteristicKind FileType) override {
-//
-//     const unsigned ID =
-//     DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
-//                                            "Incorrect Include Style");
-//
-//     auto SrcFileName = SM.getFilename(FilenameRange.getBegin());
-//
-//     SmallString<512> Src = SrcFileName;
-//     llvm::sys::path::replace_extension(Src, ".h");
-//
-//     if (FileType == SrcMgr::CharacteristicKind::C_User) {
-//
-//       // if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName))
-//       {
-//       //   if (SM.isInMainFile(HashLoc) &&
-//       //       (SrcFileName.contains("\\Source\\2D") ||
-//       //        SrcFileName.contains("\\Source\\3D")) &&
-//       //       !SrcFileName.contains("\\ProtSys\\") &&
-//       //       !SrcFileName.contains("\\Impl\\") &&
-//       !FileName.contains("..")
-//       &&
-//       //       !FileName.contains("\\Impl\\") &&
-//       //       !SrcFileName.contains("\\RasterOut\\")) {
-//
-//       //    // llvm::outs() << FileName << "\n";
-//       //    // llvm::outs() << SM.getFilename(FilenameRange.getBegin()) <<
-//       //    "\n\n";
-//
-//       //    SmallString<512> path = SearchPath;
-//       //    path += "/";
-//       //    path += FileName;
-//
-//       //    llvm::sys::fs::make_absolute(path);
-//       //    path = llvm::sys::path::convert_to_slash(
-//       //        path, llvm::sys::path::Style::windows_backslash);
-//
-//       //    if (auto pos = path.find("/Source/"); pos != -1) {
-//
-//       //      path = path.substr(pos + 8);
-//
-//       //      const size_t offset =
-//       //          path.startswith("2D/") || path.startswith("3D/") ? 3 : 0;
-//       //      path = path.substr(offset);
-//
-//       //      std::string Replacement = (llvm::Twine("<") + path +
-//       ">").str();
-//       //      // std::string Replacement = (llvm::Twine("<") + path +
-//       //      ">").str();
-//
-//       //      if (FileName != path && !path.startswith("UI/Include/"))
-//       //        DE.Report(FilenameRange.getBegin(), ID)
-//       //            <<
-//       FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-//       //                                            Replacement);
-//       //    }
-//       //  }
-//       //}
-//
-//       if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
-//
-//         if (SM.isInMainFile(HashLoc)) {
-//           ++I;
-//
-//           std::string Replacement =
-//               (llvm::Twine("\"") + llvm::sys::path::filename(FileName) +
-//               "\"")
-//                   .str();
-//
-//           if (I > 1)
-//             DE.Report(FilenameRange.getBegin(), ID) <<
-//             FixItHint::CreateRemoval(
-//                 clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-//           else if (llvm::sys::path::filename(FileName) != FileName) {
-//             DE.Report(FilenameRange.getBegin(), ID)
-//                 << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-//                                                 Replacement);
-//           }
-//         } else {
-//           std::lock_guard lock(Mutex);
-//
-//           if (auto SrcInclude = SM.getFilename(FilenameRange.getBegin());
-//               SrcInclude.ends_with(".h") &&
-//               !VisitedHeaders.contains(SrcInclude)) {
-//             VisitedHeaders.insert(SrcInclude);
-//             DE.Report(FilenameRange.getBegin(), ID) <<
-//             FixItHint::CreateRemoval(
-//                 clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-//           }
-//         }
-//       }
-//     }
-//   }
-// };
-//
-// class Include_Matching_Action : public PreprocessOnlyAction {
-// private:
-//   std::unique_ptr<clang::FixItRewriter> Rewriter;
-//   XFixItOptions Options;
-//
-// private:
-//   bool BeginSourceFileAction(CompilerInstance &CI) override {
-//     Preprocessor &PP = CI.getPreprocessor();
-//
-//     Rewriter = std::make_unique<clang::FixItRewriter>(
-//         CI.getDiagnostics(), CI.getSourceManager(), CI.getLangOpts(),
-//         &Options);
-//
-//     PP.addPPCallbacks(std::make_unique<Find_Includes>(CI.getSourceManager(),
-//                                                       CI.getDiagnostics()));
-//     return true;
-//   }
-//
-//   void EndSourceFileAction() override { Rewriter->WriteFixedFiles(); }
-// };
 
 int main(int argc, const char **argv) {
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
