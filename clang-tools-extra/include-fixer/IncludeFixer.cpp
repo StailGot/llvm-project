@@ -246,7 +246,8 @@ public:
 
       //      Replacements[SrcFileName.str()].add(
       //          CreateReplacementFromSourceLocation(
-      //              SM, FilenameRange.getBegin(), GetRangeSize(SM, FilenameRange, CI.getLangOpts()), Replacement));
+      //              SM, FilenameRange.getBegin(), GetRangeSize(SM,
+      //              FilenameRange, CI.getLangOpts()), Replacement));
       //    }
       //  }
       //}
@@ -310,8 +311,8 @@ private:
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
-// class XFrontendAction : public ASTFrontendAction {
-class XFrontendAction : public PreprocessOnlyAction {
+class XFrontendAction : public ASTFrontendAction {
+  // class XFrontendAction : public PreprocessOnlyAction {
 
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
@@ -322,8 +323,8 @@ public:
   bool BeginSourceFileAction(CompilerInstance &CI) override {
 
     Preprocessor &PP = CI.getPreprocessor();
-
     PP.addPPCallbacks(std::make_unique<Find_Includes>(CI, Replacements));
+
     return true;
   }
 
@@ -338,8 +339,6 @@ public:
     std::scoped_lock Lock{MU};
     TURs.push_back(TUR);
   }
-
-  bool usesPreprocessorOnly() const override { return true; }
 
 private:
   ReplacementsMap Replacements;
