@@ -151,21 +151,22 @@ public:
 
           llvm::errs() << Decl->getNameAsString() << "\n";
         } else {
-          auto RawComment = Result.Context->getRawCommentForDeclNoCache(Decl);
-          auto Comment = RawComment->getRawText(*SM);
+          // auto RawComment =
+          // Result.Context->getRawCommentForDeclNoCache(Decl); auto Comment =
+          // RawComment->getRawText(*SM);
 
-          if (!Comment.contains("/**")) {
-            llvm::errs() << Comment << "\n"
-                         << Decl->getNameAsString() << "\n\n";
+          // if (!Comment.contains("/**")) {
+          //   llvm::errs() << Comment << "\n"
+          //                << Decl->getNameAsString() << "\n\n";
 
-            auto Range =
-                CharSourceRange::getTokenRange(RawComment->getSourceRange());
+          //  auto Range =
+          //      CharSourceRange::getTokenRange(RawComment->getSourceRange());
 
-            Replacements[FileName.c_str()].add(
-                CreateReplacementFromSourceLocation(
-                    *SM, RawComment->getBeginLoc(),
-                    GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
-          }
+          //  Replacements[FileName.c_str()].add(
+          //      CreateReplacementFromSourceLocation(
+          //          *SM, RawComment->getBeginLoc(),
+          //          GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
+          //}
         }
       }
     }
