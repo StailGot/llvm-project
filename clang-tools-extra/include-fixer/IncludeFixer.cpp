@@ -113,90 +113,93 @@ tooling::TranslationUnitReplacements MergeReplacements(
   return Result;
 }
 
-class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
-public:
-  FunctionDeclMatchHandler(ReplacementsMap &Replacements, CompilerInstance &CI)
-      : Replacements{Replacements}, CI{CI} {}
+// class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
+// public:
+//   FunctionDeclMatchHandler(ReplacementsMap &Replacements, CompilerInstance
+//   &CI)
+//       : Replacements{Replacements}, CI{CI} {}
+//
+//   void run(const MatchFinder::MatchResult &Result) override {
+//     auto Decl = Result.Nodes.getNodeAs<clang::CXXMethodDecl>("fnDecl");
+//
+//     auto &&SM = Result.SourceManager;
+//
+//     if (std::string FileName =
+//             NormalizeFilePath(SM->getFilename(Decl->getBeginLoc()).str());
+//         !std::empty(FileName)) {
+//
+//       auto Expansion =
+//           SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
+//               .getExpansion();
+//
+//       if (Decl->getParent() && !Decl->getParent()->isLambda() &&
+//           Decl->getCanonicalDecl() != Decl &&
+//           !Expansion.isMacroArgExpansion()) {
+//
+//         if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
+//           auto &&DE = Result.SourceManager->getDiagnostics();
+//           const unsigned ID = DE.getCustomDiagID(
+//               clang::DiagnosticsEngine::Warning, "No Comment!");
+//
+//           DE.Report(Decl->getBeginLoc(), ID)
+//               << "Add " << FunctionDefCommentHeader
+//               << FixItHint::CreateInsertion(Decl->getBeginLoc(),
+//                                             FunctionDefCommentHeader);
+//
+//           auto err = Replacements[FileName.c_str()].add(
+//               CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(),
+//               0,
+//                                                   FunctionDefCommentHeader));
+//
+//           llvm::errs() << Decl->getNameAsString() << "\n";
+//         } else {
+//           // auto RawComment =
+//           // Result.Context->getRawCommentForDeclNoCache(Decl); auto Comment
+//           =
+//           // RawComment->getRawText(*SM);
+//
+//           // if (!Comment.contains("/**")) {
+//           //   llvm::errs() << Comment << "\n"
+//           //                << Decl->getNameAsString() << "\n\n";
+//
+//           //  auto Range =
+//           // CharSourceRange::getTokenRange(RawComment->getSourceRange());
+//
+//           //  Replacements[FileName.c_str()].add(
+//           //      CreateReplacementFromSourceLocation(
+//           //          *SM, RawComment->getBeginLoc(),
+//           //          GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
+//           //}
+//         }
+//       }
+//     }
+//   }
+//
+// private:
+//   ReplacementsMap &Replacements;
+//   CompilerInstance &CI;
+// };
 
-  void run(const MatchFinder::MatchResult &Result) override {
-    auto Decl = Result.Nodes.getNodeAs<clang::CXXMethodDecl>("fnDecl");
-
-    auto &&SM = Result.SourceManager;
-
-    if (std::string FileName =
-            NormalizeFilePath(SM->getFilename(Decl->getBeginLoc()).str());
-        !std::empty(FileName)) {
-
-      auto Expansion =
-          SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
-              .getExpansion();
-
-      if (Decl->getParent() && !Decl->getParent()->isLambda() &&
-          Decl->getCanonicalDecl() != Decl &&
-          !Expansion.isMacroArgExpansion()) {
-
-        if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
-          auto &&DE = Result.SourceManager->getDiagnostics();
-          const unsigned ID = DE.getCustomDiagID(
-              clang::DiagnosticsEngine::Warning, "No Comment!");
-
-          DE.Report(Decl->getBeginLoc(), ID)
-              << "Add " << FunctionDefCommentHeader
-              << FixItHint::CreateInsertion(Decl->getBeginLoc(),
-                                            FunctionDefCommentHeader);
-
-          Replacements[FileName.c_str()].add(
-              CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(), 0,
-                                                  FunctionDefCommentHeader));
-
-          llvm::errs() << Decl->getNameAsString() << "\n";
-        } else {
-          // auto RawComment =
-          // Result.Context->getRawCommentForDeclNoCache(Decl); auto Comment =
-          // RawComment->getRawText(*SM);
-
-          // if (!Comment.contains("/**")) {
-          //   llvm::errs() << Comment << "\n"
-          //                << Decl->getNameAsString() << "\n\n";
-
-          //  auto Range =
-          //      CharSourceRange::getTokenRange(RawComment->getSourceRange());
-
-          //  Replacements[FileName.c_str()].add(
-          //      CreateReplacementFromSourceLocation(
-          //          *SM, RawComment->getBeginLoc(),
-          //          GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
-          //}
-        }
-      }
-    }
-  }
-
-private:
-  ReplacementsMap &Replacements;
-  CompilerInstance &CI;
-};
-
-class XASTConsumer : public ASTConsumer {
-public:
-  XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
-      : Replacements{Replacements}, Handler{Replacements, CI} {
-
-    Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
-                                     unless(isExpansionInSystemHeader()))
-                           .bind("fnDecl"),
-                       &Handler);
-  }
-
-  void HandleTranslationUnit(ASTContext &Context) override {
-    Matcher.matchAST(Context);
-  }
-
-private:
-  FunctionDeclMatchHandler Handler;
-  MatchFinder Matcher;
-  ReplacementsMap &Replacements;
-};
+// class XASTConsumer : public ASTConsumer {
+// public:
+//   XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
+//       : Replacements{Replacements}, Handler{Replacements, CI} {
+//
+//     Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
+//                                      unless(isExpansionInSystemHeader()))
+//                            .bind("fnDecl"),
+//                        &Handler);
+//   }
+//
+//   void HandleTranslationUnit(ASTContext &Context) override {
+//     Matcher.matchAST(Context);
+//   }
+//
+// private:
+//   //FunctionDeclMatchHandler Handler;
+//   MatchFinder Matcher;
+//   ReplacementsMap &Replacements;
+// };
 
 class Find_Includes : public PPCallbacks {
 public:
@@ -223,96 +226,112 @@ public:
 
     SrcFileName = NormalizeFilePath(SrcFileName.str()).c_str();
 
-    if (FileType == SrcMgr::CharacteristicKind::C_User) {
+    if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
+      if (SM.isInMainFile(HashLoc)) {
+        ++I;
 
-      // if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
-      //   if (SM.isInMainFile(HashLoc) &&
-      //       (SrcFileName.contains("\\Source\\2D") ||
-      //        SrcFileName.contains("\\Source\\3D")) &&
-      //       !SrcFileName.contains("\\ProtSys\\") &&
-      //       !SrcFileName.contains("\\Impl\\") && !FileName.contains("..") &&
-      //       !FileName.contains("\\Impl\\") &&
-      //       !SrcFileName.contains("\\RasterOut\\")) {
+        std::string Replacement =
+            (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
+                .str();
 
-      //    SmallString<512> path = SearchPath;
-      //    path += "/";
-      //    path += FileName;
+        if (I > 1) {
+          DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
 
-      //    llvm::sys::fs::make_absolute(path);
-      //    path = llvm::sys::path::convert_to_slash(
-      //        path, llvm::sys::path::Style::windows_backslash);
+          auto Range = CharSourceRange::getTokenRange(
+              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
 
-      //    if (auto pos = path.find("/Source/"); pos != -1) {
+          auto err = Replacements[SrcFileName.str()].add(
+              CreateReplacementFromSourceLocation(
+                  SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()), ""));
 
-      //      path = path.substr(pos + 8);
+        } else if (llvm::sys::path::filename(FileName) != FileName) {
+          {
+            DE.Report(FilenameRange.getBegin(), ID)
+                << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
+                                                Replacement);
 
-      //      const size_t offset =
-      //          path.startswith("2D/") || path.startswith("3D/") ? 3 : 0;
-      //      path = path.substr(offset);
-
-      //      std::string Replacement = (llvm::Twine("<") + path + ">").str();
-
-      //      if (FileName != path && !path.startswith("UI/Include/"))
-      //        DE.Report(FilenameRange.getBegin(), ID)
-      //            << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-      //                                            Replacement);
-
-      //      Replacements[SrcFileName.str()].add(
-      //          CreateReplacementFromSourceLocation(
-      //              SM, FilenameRange.getBegin(), GetRangeSize(SM,
-      //              FilenameRange, CI.getLangOpts()), Replacement));
-      //    }
-      //  }
-      //}
-
-      if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
-        if (SM.isInMainFile(HashLoc)) {
-          ++I;
-
-          std::string Replacement =
-              (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
-                  .str();
-
-          if (I > 1) {
-            DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
-                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-            auto Range = CharSourceRange::getTokenRange(
-                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-            Replacements[SrcFileName.str()].add(
+            auto err = Replacements[SrcFileName.str()].add(
                 CreateReplacementFromSourceLocation(
-                    SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()),
-                    ""));
-
-          } else if (llvm::sys::path::filename(FileName) != FileName) {
-            {
-              DE.Report(FilenameRange.getBegin(), ID)
-                  << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-                                                  Replacement);
-
-              Replacements[SrcFileName.str()].add(
-                  CreateReplacementFromSourceLocation(
-                      SM, FilenameRange.getBegin(),
-                      GetRangeSize(SM, FilenameRange, CI.getLangOpts()),
-                      Replacement));
-            }
-          }
-
-        } else {
-          if (!SrcFileName.ends_with(".cpp")) {
-            DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
-                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-            auto Range = CharSourceRange::getTokenRange(
-                clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-            Replacements[SrcFileName.str()].add(
-                CreateReplacementFromSourceLocation(
-                    SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()),
-                    ""));
+                    SM, FilenameRange.getBegin(),
+                    GetRangeSize(SM, FilenameRange, CI.getLangOpts()),
+                    Replacement));
           }
         }
+
+      } else {
+        if (FileType == SrcMgr::CharacteristicKind::C_User &&
+            !SrcFileName.ends_with(".cpp")) {
+          DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
+              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+
+          auto Range = CharSourceRange::getTokenRange(
+              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
+
+          auto err = Replacements[SrcFileName.str()].add(
+              CreateReplacementFromSourceLocation(
+                  SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()), ""));
+        }
+      }
+    } else if (FileType == SrcMgr::CharacteristicKind::C_User) {
+
+      if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
+        // if (SM.isInMainFile(HashLoc)) {
+
+        SmallString<512> path = SearchPath;
+        path += "/";
+        path += FileName;
+        llvm::sys::fs::make_absolute(path);
+        llvm::sys::path::remove_dots(path, true);
+
+        path = llvm::sys::path::convert_to_slash(
+            path, llvm::sys::path::Style::windows_backslash);
+
+        if (auto pos = path.find(".conan"); pos == -1)
+          if (auto pos = path.find("AfxCompat.h"); pos == -1)
+            if (auto pos = path.find("AfxExCompat.h"); pos == -1)
+              if (auto pos = path.find("BCGIncludeFull.h"); pos == -1)
+
+                if (auto pos = path.find("/Source/"); pos != -1) {
+                  path = path.substr(pos + 8);
+
+                  size_t offset =
+                      (path.startswith("2D/") || path.startswith("3D/") ||
+                       path.startswith("UI/"))
+                          ? 3
+                      : path.startswith("API/")    ? 4
+                      : path.startswith("Text/")   ? 5
+                      : path.startswith("Tests/")  ? 6
+                      : path.startswith("Render/") ? 7
+                                                   : 0;
+                  path = path.substr(offset);
+
+                  if (auto pos = path.find("/"); pos != -1) {
+
+                    offset = (path.substr(0, pos + 1) ==
+                                      path.substr(pos + 1, pos + 1)
+                                  ? pos + 1
+                                  : 0);
+
+                    path = path.substr(offset);
+
+                    std::string Replacement =
+                        (llvm::Twine("<") + path + ">").str();
+
+                    if (FileName != path || !IsAngled) {
+                      DE.Report(FilenameRange.getBegin(), ID)
+                          << FixItHint::CreateReplacement(
+                                 FilenameRange.getAsRange(), Replacement);
+
+                      auto err = Replacements[SrcFileName.str()].add(
+                          CreateReplacementFromSourceLocation(
+                              SM, FilenameRange.getBegin(),
+                              GetRangeSize(SM, FilenameRange, CI.getLangOpts()),
+                              Replacement));
+                    }
+                  }
+                }
+        //}
       }
     }
   }
@@ -324,14 +343,14 @@ private:
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
-class XFrontendAction : public ASTFrontendAction {
-  // class XFrontendAction : public PreprocessOnlyAction {
+// class XFrontendAction : public ASTFrontendAction {
+class XFrontendAction : public PreprocessOnlyAction {
 
 public:
-  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
-                                                 StringRef File) override {
-    return std::make_unique<XASTConsumer>(Replacements, CI);
-  }
+  // std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+  // StringRef File) override {
+  // return std::make_unique<XASTConsumer>(Replacements, CI);
+  //}
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
 
@@ -370,8 +389,8 @@ int main(int argc, const char **argv) {
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
 
   const char *Overview = R"(
-  check syntax across a whole C/C++ project
-  loop-convert --executor=all-TUs compile_commands.json > clangd.dex
+  check includes across a whole C/C++ project
+  include-fixer --filter=CompressPathTest.cpp
   )";
 
   tooling::ExecutorName.setInitialValue("all-TUs");
@@ -386,9 +405,6 @@ int main(int argc, const char **argv) {
 
   auto Err =
       Executor->get()->execute(std::make_unique<XFrontendActionFactory>());
-
-  // auto Err =
-  // Executor->get()->execute(newFrontendActionFactory<Include_Matching_Action>());
 
   tooling::TranslationUnitReplacements TUR = MergeReplacements(TURs);
   yaml::Output YAML(llvm::outs());
