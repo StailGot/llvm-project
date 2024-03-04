@@ -113,93 +113,177 @@ tooling::TranslationUnitReplacements MergeReplacements(
   return Result;
 }
 
-// class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
-// public:
-//   FunctionDeclMatchHandler(ReplacementsMap &Replacements, CompilerInstance
-//   &CI)
-//       : Replacements{Replacements}, CI{CI} {}
-//
-//   void run(const MatchFinder::MatchResult &Result) override {
-//     auto Decl = Result.Nodes.getNodeAs<clang::CXXMethodDecl>("fnDecl");
-//
-//     auto &&SM = Result.SourceManager;
-//
-//     if (std::string FileName =
-//             NormalizeFilePath(SM->getFilename(Decl->getBeginLoc()).str());
-//         !std::empty(FileName)) {
-//
-//       auto Expansion =
-//           SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
-//               .getExpansion();
-//
-//       if (Decl->getParent() && !Decl->getParent()->isLambda() &&
-//           Decl->getCanonicalDecl() != Decl &&
-//           !Expansion.isMacroArgExpansion()) {
-//
-//         if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
-//           auto &&DE = Result.SourceManager->getDiagnostics();
-//           const unsigned ID = DE.getCustomDiagID(
-//               clang::DiagnosticsEngine::Warning, "No Comment!");
-//
-//           DE.Report(Decl->getBeginLoc(), ID)
-//               << "Add " << FunctionDefCommentHeader
-//               << FixItHint::CreateInsertion(Decl->getBeginLoc(),
-//                                             FunctionDefCommentHeader);
-//
-//           auto err = Replacements[FileName.c_str()].add(
-//               CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(),
-//               0,
-//                                                   FunctionDefCommentHeader));
-//
-//           llvm::errs() << Decl->getNameAsString() << "\n";
-//         } else {
-//           // auto RawComment =
-//           // Result.Context->getRawCommentForDeclNoCache(Decl); auto Comment
-//           =
-//           // RawComment->getRawText(*SM);
-//
-//           // if (!Comment.contains("/**")) {
-//           //   llvm::errs() << Comment << "\n"
-//           //                << Decl->getNameAsString() << "\n\n";
-//
-//           //  auto Range =
-//           // CharSourceRange::getTokenRange(RawComment->getSourceRange());
-//
-//           //  Replacements[FileName.c_str()].add(
-//           //      CreateReplacementFromSourceLocation(
-//           //          *SM, RawComment->getBeginLoc(),
-//           //          GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
-//           //}
-//         }
-//       }
-//     }
-//   }
-//
-// private:
-//   ReplacementsMap &Replacements;
-//   CompilerInstance &CI;
-// };
+class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
+public:
+  FunctionDeclMatchHandler(ReplacementsMap &Replacements, CompilerInstance &CI)
+      : Replacements{Replacements}, CI{CI} {}
 
-// class XASTConsumer : public ASTConsumer {
-// public:
-//   XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
-//       : Replacements{Replacements}, Handler{Replacements, CI} {
-//
-//     Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
-//                                      unless(isExpansionInSystemHeader()))
-//                            .bind("fnDecl"),
-//                        &Handler);
-//   }
-//
-//   void HandleTranslationUnit(ASTContext &Context) override {
-//     Matcher.matchAST(Context);
-//   }
-//
-// private:
-//   //FunctionDeclMatchHandler Handler;
-//   MatchFinder Matcher;
-//   ReplacementsMap &Replacements;
-// };
+  void run(const MatchFinder::MatchResult &Result) override {
+    auto memberExpr = Result.Nodes.getNodeAs<clang::MemberExpr>("memberExpr");
+    auto implicitCastExpr =
+        Result.Nodes.getNodeAs<clang::ImplicitCastExpr>("implicitCastExpr");
+
+    auto &&SM = *Result.SourceManager;
+
+    auto SrcFileName = SM.getFilename(memberExpr->getSourceRange().getBegin());
+
+    // llvm::errs() << SrcFileName << "\n\n";
+
+    if (SrcFileName.contains("Source\\") && memberExpr->getQualifier() &&
+        memberExpr->getQualifier()->getKind() ==
+            clang::NestedNameSpecifier::Super) {
+
+      const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+      const auto *RD =
+          cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+
+      auto &&DE = Result.SourceManager->getDiagnostics();
+      const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                             "__super is ms-extension");
+
+      const auto &&DC = implicitCastExpr->getBestDynamicClassType();
+
+      const std::string BaseClass = "BaseClass";
+      // const std::string BaseClass = DC->getNameAsString() + "Base";
+      const std::string Code =
+          std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "\nusing " +
+          BaseClass + " = " +
+          // Base->getType()->getCanonicalTypeInternal().getAsString() + ";";
+          RD->getName().str() + ";\n" +
+          std::string{DC->isStruct() ? "\npublic:\n" : ""};
+
+      auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(1);
+
+      // auto M = cxxRecordDecl(anyOf(
+      //     has(typeAliasDecl(hasName("bazBase")).bind("xxx")), anything()));
+
+      DE.Report(InstertBegin, ID)
+          << FixItHint::CreateInsertion(InstertBegin, Code);
+
+      // if (std::string FileName = NormalizeFilePath(
+      //         SM.getFilename(memberExpr->getBeginLoc()).str());
+      //     !std::empty(FileName)) {
+
+      //  auto err = Replacements[FileName.c_str()].add(
+      //      CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+      //}
+
+      auto Range = CharSourceRange::getTokenRange(clang::SourceRange(
+          memberExpr->getQualifierLoc().getBeginLoc(),
+          memberExpr->getQualifierLoc().getEndLoc().getLocWithOffset(-2)));
+
+      std::string Replacement = "/* __super */ ";
+      // Replacement +=
+      //     implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
+      // const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+      // const auto *RD =
+      //    cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+      // Replacement += RD->getName();
+      Replacement += BaseClass;
+
+      DE.Report(memberExpr->getQualifierLoc().getBeginLoc(), ID)
+          << FixItHint::CreateReplacement(Range, Replacement);
+
+      if (std::string FileName = NormalizeFilePath(
+              SM.getFilename(memberExpr->getBeginLoc()).str());
+          !std::empty(FileName)) {
+
+        (void)Replacements[FileName.c_str()].add(
+            CreateReplacementFromSourceLocation(
+                SM, Range.getBegin(), GetRangeSize(SM, Range, CI.getLangOpts()),
+                Replacement));
+      }
+
+      if (std::string FileName =
+              NormalizeFilePath(SM.getFilename(DC->getBeginLoc()).str());
+          !std::empty(FileName) && DC->getBraceRange().isValid()) {
+
+        (void)Replacements[FileName.c_str()].add(
+            CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+      }
+    }
+
+    // llvm::errs() << SM << "\n\n";
+
+    // if (std::string FileName =
+    //         NormalizeFilePath(SM->getFilename(Decl->getBeginLoc()).str());
+    //     !std::empty(FileName)) {
+
+    //  auto Expansion =
+    //      SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
+    //          .getExpansion();
+
+    //  if (Decl->getParent() && !Decl->getParent()->isLambda() &&
+    //      Decl->getCanonicalDecl() != Decl &&
+    //      !Expansion.isMacroArgExpansion()) {
+
+    //    if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
+    //      auto &&DE = Result.SourceManager->getDiagnostics();
+    //      const unsigned ID = DE.getCustomDiagID(
+    //          clang::DiagnosticsEngine::Warning, "No Comment!");
+
+    //      DE.Report(Decl->getBeginLoc(), ID)
+    //          << "Add " << FunctionDefCommentHeader
+    //          << FixItHint::CreateInsertion(Decl->getBeginLoc(),
+    //                                        FunctionDefCommentHeader);
+
+    //      auto err = Replacements[FileName.c_str()].add(
+    //          CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(), 0,
+    //                                              FunctionDefCommentHeader));
+
+    //      llvm::errs() << Decl->getNameAsString() << "\n";
+    //    } else {
+    //      auto RawComment = Result.Context->getRawCommentForDeclNoCache(Decl);
+    //      auto Comment = RawComment->getRawText(*SM);
+
+    //      if (!Comment.contains("/**")) {
+    //        llvm::errs() << Comment << "\n"
+    //                     << Decl->getNameAsString() << "\n\n";
+
+    //        auto Range =
+    //            CharSourceRange::getTokenRange(RawComment->getSourceRange());
+
+    //        Replacements[FileName.c_str()].add(
+    //            CreateReplacementFromSourceLocation(
+    //                *SM, RawComment->getBeginLoc(),
+    //                GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
+    //      }
+    //    }
+    //  }
+    //}
+  }
+
+private:
+  ReplacementsMap &Replacements;
+  CompilerInstance &CI;
+};
+
+class XASTConsumer : public ASTConsumer {
+public:
+  XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
+      : Replacements{Replacements}, Handler{Replacements, CI} {
+
+    // Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
+    //                                  unless(isExpansionInSystemHeader()))
+    //                        .bind("fnDecl"),
+    //                    &Handler);
+
+    Matcher.addMatcher(cxxMemberCallExpr(hasDescendant(
+                           memberExpr(hasDescendant(implicitCastExpr().bind(
+                                          "implicitCastExpr")))
+                               .bind("memberExpr"))),
+                       &Handler);
+  }
+
+  void HandleTranslationUnit(ASTContext &Context) override {
+    Matcher.matchAST(Context);
+  }
+
+private:
+  FunctionDeclMatchHandler Handler;
+  MatchFinder Matcher;
+  ReplacementsMap &Replacements;
+};
 
 class Find_Includes : public PPCallbacks {
 public:
@@ -303,7 +387,7 @@ public:
                       : path.starts_with("Text/")   ? 5
                       : path.starts_with("Tests/")  ? 6
                       : path.starts_with("Render/") ? 7
-                                                   : 0;
+                                                    : 0;
                   path = path.substr(offset);
 
                   if (auto pos = path.find("/"); pos != -1) {
@@ -343,21 +427,21 @@ private:
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
-// class XFrontendAction : public ASTFrontendAction {
-class XFrontendAction : public PreprocessOnlyAction {
+class XFrontendAction : public ASTFrontendAction {
+  // class XFrontendAction : public PreprocessOnlyAction {
 
 public:
-  // std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
-  // StringRef File) override {
-  // return std::make_unique<XASTConsumer>(Replacements, CI);
-  //}
+  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+                                                 StringRef File) override {
+    return std::make_unique<XASTConsumer>(Replacements, CI);
+  }
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
 
-    CI.getLangOpts().CommentOpts.ParseAllComments = true;
+    // CI.getLangOpts().CommentOpts.ParseAllComments = true;
 
-    Preprocessor &PP = CI.getPreprocessor();
-    PP.addPPCallbacks(std::make_unique<Find_Includes>(CI, Replacements));
+    // Preprocessor &PP = CI.getPreprocessor();
+    // PP.addPPCallbacks(std::make_unique<Find_Includes>(CI, Replacements));
 
     return true;
   }
