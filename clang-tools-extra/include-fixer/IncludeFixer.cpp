@@ -146,13 +146,16 @@ public:
       const std::string BaseClass = "BaseClass";
       // const std::string BaseClass = DC->getNameAsString() + "Base";
       const std::string Code =
-          std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "using " +
+          std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "\nusing " +
           BaseClass + " = " +
           // Base->getType()->getCanonicalTypeInternal().getAsString() + ";";
-          RD->getName().str() + ";" +
+          RD->getName().str() + ";\n" +
           std::string{DC->isStruct() ? "\npublic:\n" : ""};
 
-      auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(2);
+      auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(1);
+
+      // auto M = cxxRecordDecl(anyOf(
+      //     has(typeAliasDecl(hasName("bazBase")).bind("xxx")), anything()));
 
       DE.Report(InstertBegin, ID)
           << FixItHint::CreateInsertion(InstertBegin, Code);
@@ -193,7 +196,7 @@ public:
 
       if (std::string FileName =
               NormalizeFilePath(SM.getFilename(DC->getBeginLoc()).str());
-          !std::empty(FileName)) {
+          !std::empty(FileName) && DC->getBraceRange().isValid()) {
 
         (void)Replacements[FileName.c_str()].add(
             CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
