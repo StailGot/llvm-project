@@ -133,9 +133,31 @@ public:
         memberExpr->getQualifier()->getKind() ==
             clang::NestedNameSpecifier::Super) {
 
+      const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+      const auto *RD =
+          cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+
       auto &&DE = Result.SourceManager->getDiagnostics();
       const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
                                              "__super is ms-extension");
+
+      const auto &&DC = implicitCastExpr->getBestDynamicClassType();
+
+      const std::string BaseClass = DC->getNameAsString() + "Base";
+      const std::string Code =
+          "using " + BaseClass + " = " + RD->getName().str() + ";";
+
+      DE.Report(DC->getBeginLoc(), ID)
+          << FixItHint::CreateInsertion(DC->getBeginLoc(), Code);
+
+      if (std::string FileName = NormalizeFilePath(
+              SM.getFilename(memberExpr->getBeginLoc()).str());
+          !std::empty(FileName)) {
+
+        auto err = Replacements[FileName.c_str()].add(
+            CreateReplacementFromSourceLocation(
+                SM, DC->getBeginLoc().getLocWithOffset(-1), 0, Code));
+      }
 
       auto Range = CharSourceRange::getTokenRange(clang::SourceRange(
           memberExpr->getQualifierLoc().getBeginLoc(),
@@ -144,10 +166,11 @@ public:
       std::string Replacement = "/* __super */ ";
       // Replacement +=
       //     implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
-      const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
-      const auto *RD =
-          cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
-      Replacement += RD->getName();
+      // const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+      // const auto *RD =
+      //    cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+      // Replacement += RD->getName();
+      Replacement += BaseClass;
 
       DE.Report(memberExpr->getQualifierLoc().getBeginLoc(), ID)
           << FixItHint::CreateReplacement(Range, Replacement);
