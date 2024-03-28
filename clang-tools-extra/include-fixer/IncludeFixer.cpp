@@ -142,8 +142,12 @@ public:
           memberExpr->getQualifierLoc().getEndLoc().getLocWithOffset(-2)));
 
       std::string Replacement = "/* __super */ ";
-      Replacement +=
-          implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
+      // Replacement +=
+      //     implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
+      const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+      const auto *RD =
+          cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+      Replacement += RD->getName();
 
       DE.Report(memberExpr->getQualifierLoc().getBeginLoc(), ID)
           << FixItHint::CreateReplacement(Range, Replacement);
