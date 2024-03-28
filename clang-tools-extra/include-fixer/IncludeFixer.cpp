@@ -143,21 +143,27 @@ public:
 
       const auto &&DC = implicitCastExpr->getBestDynamicClassType();
 
-      const std::string BaseClass = DC->getNameAsString() + "Base";
+      const std::string BaseClass = "BaseClass";
+      // const std::string BaseClass = DC->getNameAsString() + "Base";
       const std::string Code =
-          "using " + BaseClass + " = " + RD->getName().str() + ";";
+          std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "using " +
+          BaseClass + " = " +
+          // Base->getType()->getCanonicalTypeInternal().getAsString() + ";";
+          RD->getName().str() + ";" +
+          std::string{DC->isStruct() ? "\npublic:\n" : ""};
 
-      DE.Report(DC->getBeginLoc(), ID)
-          << FixItHint::CreateInsertion(DC->getBeginLoc(), Code);
+      auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(2);
 
-      if (std::string FileName = NormalizeFilePath(
-              SM.getFilename(memberExpr->getBeginLoc()).str());
-          !std::empty(FileName)) {
+      DE.Report(InstertBegin, ID)
+          << FixItHint::CreateInsertion(InstertBegin, Code);
 
-        auto err = Replacements[FileName.c_str()].add(
-            CreateReplacementFromSourceLocation(
-                SM, DC->getBeginLoc().getLocWithOffset(-1), 0, Code));
-      }
+      // if (std::string FileName = NormalizeFilePath(
+      //         SM.getFilename(memberExpr->getBeginLoc()).str());
+      //     !std::empty(FileName)) {
+
+      //  auto err = Replacements[FileName.c_str()].add(
+      //      CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+      //}
 
       auto Range = CharSourceRange::getTokenRange(clang::SourceRange(
           memberExpr->getQualifierLoc().getBeginLoc(),
@@ -179,10 +185,18 @@ public:
               SM.getFilename(memberExpr->getBeginLoc()).str());
           !std::empty(FileName)) {
 
-        auto err = Replacements[FileName.c_str()].add(
+        (void)Replacements[FileName.c_str()].add(
             CreateReplacementFromSourceLocation(
                 SM, Range.getBegin(), GetRangeSize(SM, Range, CI.getLangOpts()),
                 Replacement));
+      }
+
+      if (std::string FileName =
+              NormalizeFilePath(SM.getFilename(DC->getBeginLoc()).str());
+          !std::empty(FileName)) {
+
+        (void)Replacements[FileName.c_str()].add(
+            CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
       }
     }
 
