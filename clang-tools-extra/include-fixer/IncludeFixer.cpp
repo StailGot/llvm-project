@@ -37,10 +37,10 @@ std::vector<tooling::TranslationUnitReplacements> TURs;
 
 using ReplacementsMap = std::map<std::string, tooling::Replacements>;
 
-std::string_view FunctionDefCommentHeader =
-    "\n//"
-    "-----------------------------------------------------"
-    "-------------------------\n/**\n  \n*/\n//---\n";
+// std::string_view FunctionDefCommentHeader =
+//     "\n//"
+//     "-----------------------------------------------------"
+//     "-------------------------\n/**\n  \n*/\n//---\n";
 
 int GetRangeSize(const SourceManager &Sources, const CharSourceRange &Range,
                  const LangOptions &LangOpts) {
@@ -65,19 +65,28 @@ std::string NormalizeFilePath(const std::string &path) {
   return normalized.str().str();
 }
 
-bool IsAssociatedInclude(std::string_view Src, std::string_view Include) {
-  return llvm::sys::fs::equivalent(Src, Include);
-}
+// bool IsAssociatedInclude(std::string_view Src, std::string_view Include) {
+//   return llvm::sys::fs::equivalent(Src, Include);
+// }
 
 tooling::Replacement
 CreateReplacementFromSourceLocation(const SourceManager &Sources,
                                     SourceLocation Start, unsigned Length,
                                     StringRef ReplacementText) {
   const auto &&[FileID, Offset] = Sources.getDecomposedLoc(Start);
-  const FileEntryRef Entry = *Sources.getFileEntryRefForID(FileID);
-  auto FilePath =
-      std::string(Entry ? NormalizeFilePath(Entry.getName().str()) : "");
-  return Replacement{FilePath, Offset, Length, ReplacementText};
+  Replacement result;
+
+  if (Sources.getFileEntryRefForID(FileID)) {
+    const FileEntryRef Entry = *Sources.getFileEntryRefForID(FileID);
+    auto FilePath =
+        std::string(Entry ? NormalizeFilePath(Entry.getName().str()) : "");
+
+    // const auto FilePath = Sources.getFilename(Sources.getFileLoc(Start));
+    // const auto Offset = Sources.getFileOffset(Start);
+
+    result = Replacement{FilePath, Offset, Length, ReplacementText};
+  }
+  return result;
 }
 
 tooling::TranslationUnitReplacements MergeReplacements(
@@ -119,89 +128,174 @@ public:
       : Replacements{Replacements}, CI{CI} {}
 
   void run(const MatchFinder::MatchResult &Result) override {
-    auto memberExpr = Result.Nodes.getNodeAs<clang::MemberExpr>("memberExpr");
-    auto implicitCastExpr =
-        Result.Nodes.getNodeAs<clang::ImplicitCastExpr>("implicitCastExpr");
+    // auto memberExpr =
+    // Result.Nodes.getNodeAs<clang::MemberExpr>("memberExpr"); auto
+    // implicitCastExpr =
+    //     Result.Nodes.getNodeAs<clang::ImplicitCastExpr>("implicitCastExpr");
+
+    // auto varDecl = Result.Nodes.getNodeAs<clang::VarDecl>("varDecl");
+    // auto callExpr = Result.Nodes.getNodeAs<clang::CallExpr>("callExpr");
+    auto declRefExpr =
+        Result.Nodes.getNodeAs<clang::DeclRefExpr>("declRefExpr");
 
     auto &&SM = *Result.SourceManager;
 
-    auto SrcFileName = SM.getFilename(memberExpr->getSourceRange().getBegin());
+    const auto SrcFileNameOrigin =
+        // SM.getFilename(declRefExpr->getBeginLoc())
+        SM.getFilename(SM.getFileLoc(declRefExpr->getBeginLoc()));
 
-    // llvm::errs() << SrcFileName << "\n\n";
+    // const auto SrcFileNameOrigin =
+    //     SM.getFilename(callExpr->getSourceRange().getBegin());
 
-    if (SrcFileName.contains("Source\\") && memberExpr->getQualifier() &&
-        memberExpr->getQualifier()->getKind() ==
-            clang::NestedNameSpecifier::Super) {
+    const auto SrcFileName = !SrcFileNameOrigin.empty()
+                                 ? NormalizeFilePath(SrcFileNameOrigin.data())
+                                 : "";
 
-      const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
-      const auto *RD =
-          cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+    // llvm::errs() << callExpr->du << "\n\n";
+
+    // llvm::errs() <<
+    // llvm::StringRef{SM.getCharacterData(declRefExpr->getBeginLoc())} <<
+    // "\n\n";
+
+    if (SrcFileName.find("/Source/") != std::string::npos
+        //&& callExp->getAsString().find("c3d::") == std::string::npos
+        //&& !llvm::StringRef{SM.getCharacterData(callExpr->getBeginLoc())}
+        && !llvm::StringRef{SM.getCharacterData(declRefExpr->getBeginLoc())}
+                .starts_with("c3d::")) {
+      // varDecl->dump();
+      // varDecl->getLocation().dump(SM);
 
       auto &&DE = Result.SourceManager->getDiagnostics();
-      const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
-                                             "__super is ms-extension");
+      auto ID =
+          DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "use c3d::");
 
-      const auto &&DC = implicitCastExpr->getBestDynamicClassType();
-
-      const std::string BaseClass = "BaseClass";
-      // const std::string BaseClass = DC->getNameAsString() + "Base";
-      const std::string Code =
-          std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "\nusing " +
-          BaseClass + " = " +
-          // Base->getType()->getCanonicalTypeInternal().getAsString() + ";";
-          RD->getName().str() + ";\n" +
-          std::string{DC->isStruct() ? "\npublic:\n" : ""};
-
-      auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(1);
-
-      // auto M = cxxRecordDecl(anyOf(
-      //     has(typeAliasDecl(hasName("bazBase")).bind("xxx")), anything()));
+      auto InstertBegin = declRefExpr->getBeginLoc();
+      // auto InstertBegin = declRefExpr->getBeginLoc();
+      //  auto InstertBegin = callExpr->getBeginLoc();
+      auto Code = "c3d::";
 
       DE.Report(InstertBegin, ID)
           << FixItHint::CreateInsertion(InstertBegin, Code);
 
-      // if (std::string FileName = NormalizeFilePath(
-      //         SM.getFilename(memberExpr->getBeginLoc()).str());
-      //     !std::empty(FileName)) {
+      if (
+          // NormalizeFilePath(SM.getFilename(callExpr->getBeginLoc()).str());
+          !std::empty(SrcFileName)) {
 
-      //  auto err = Replacements[FileName.c_str()].add(
-      //      CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
-      //}
+        (void)Replacements[SrcFileName.c_str()].add(
+            CreateReplacementFromSourceLocation(SM, InstertBegin, 0, Code));
 
-      auto Range = CharSourceRange::getTokenRange(clang::SourceRange(
-          memberExpr->getQualifierLoc().getBeginLoc(),
-          memberExpr->getQualifierLoc().getEndLoc().getLocWithOffset(-2)));
+        // const auto &&[FileID, Offset] = SM.getDecomposedLoc(InstertBegin);
+        // const FileEntryRef Entry = *SM.getFileEntryRefForID(FileID);
+        //  auto FilePath =
+        //  std::string(Entry ? NormalizeFilePath(Entry.getName().str()) : "");
 
-      std::string Replacement = "/* __super */ ";
-      // Replacement +=
-      //     implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
-      // const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
-      // const auto *RD =
-      //    cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
-      // Replacement += RD->getName();
-      Replacement += BaseClass;
+        // llvm::errs() << Offset << "\n\n";
+        //  FileID->
 
-      DE.Report(memberExpr->getQualifierLoc().getBeginLoc(), ID)
-          << FixItHint::CreateReplacement(Range, Replacement);
-
-      if (std::string FileName = NormalizeFilePath(
-              SM.getFilename(memberExpr->getBeginLoc()).str());
-          !std::empty(FileName)) {
-
-        (void)Replacements[FileName.c_str()].add(
-            CreateReplacementFromSourceLocation(
-                SM, Range.getBegin(), GetRangeSize(SM, Range, CI.getLangOpts()),
-                Replacement));
-      }
-
-      if (std::string FileName =
-              NormalizeFilePath(SM.getFilename(DC->getBeginLoc()).str());
-          !std::empty(FileName) && DC->getBraceRange().isValid()) {
-
-        (void)Replacements[FileName.c_str()].add(
-            CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+        //(void)Replacements[SrcFileName.c_str()].add({});
       }
     }
+
+    // if (SrcFileName.find("/Source/") != std::string::npos &&
+    //     varDecl->getType().getAsString().find("c3d::") == std::string::npos)
+    //     {
+    //   // varDecl->dump();
+    //   // varDecl->getLocation().dump(SM);
+
+    //  auto &&DE = Result.SourceManager->getDiagnostics();
+    //  auto ID =
+    //      DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "use c3d::");
+
+    //  auto InstertBegin = varDecl->getTypeSpecStartLoc().getLocWithOffset(-1);
+    //  auto Code = " c3d::";
+
+    //  DE.Report(InstertBegin, ID)
+    //      << FixItHint::CreateInsertion(InstertBegin, Code);
+
+    //  if (std::string FileName =
+    //          NormalizeFilePath(SM.getFilename(varDecl->getBeginLoc()).str());
+    //      !std::empty(FileName)) {
+
+    //    (void)Replacements[FileName.c_str()].add(
+    //        CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+    //  }
+    //}
+
+    //    //if (SrcFileName.contains("Source\\") && memberExpr->getQualifier()
+    //    && memberExpr->getQualifier()->getKind() ==
+    //        clang::NestedNameSpecifier::Super) {
+
+    //  const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+    //  const auto *RD =
+    //      cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+
+    //  auto &&DE = Result.SourceManager->getDiagnostics();
+    //  const unsigned ID =
+    //  DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+    //                                         "__super is ms-extension");
+
+    //  const auto &&DC = implicitCastExpr->getBestDynamicClassType();
+
+    //  const std::string BaseClass = "BaseClass";
+    //  // const std::string BaseClass = DC->getNameAsString() + "Base";
+    //  const std::string Code =
+    //      std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "\nusing " +
+    //      BaseClass + " = " +
+    //      // Base->getType()->getCanonicalTypeInternal().getAsString() + ";";
+    //      RD->getName().str() + ";\n" +
+    //      std::string{DC->isStruct() ? "\npublic:\n" : ""};
+
+    //  auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(1);
+
+    //  // auto M = cxxRecordDecl(anyOf(
+    //  //     has(typeAliasDecl(hasName("bazBase")).bind("xxx")), anything()));
+
+    //  DE.Report(InstertBegin, ID)
+    //      << FixItHint::CreateInsertion(InstertBegin, Code);
+
+    //  // if (std::string FileName = NormalizeFilePath(
+    //  //         SM.getFilename(memberExpr->getBeginLoc()).str());
+    //  //     !std::empty(FileName)) {
+
+    //  //  auto err = Replacements[FileName.c_str()].add(
+    //  //      CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+    //  //}
+
+    //  auto Range = CharSourceRange::getTokenRange(clang::SourceRange(
+    //      memberExpr->getQualifierLoc().getBeginLoc(),
+    //      memberExpr->getQualifierLoc().getEndLoc().getLocWithOffset(-2)));
+
+    //  std::string Replacement = "/* __super */ ";
+    //  // Replacement +=
+    //  //     implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
+    //  // const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
+    //  // const auto *RD =
+    //  //
+    //  cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
+    //  // Replacement += RD->getName();
+    //  Replacement += BaseClass;
+
+    //  DE.Report(memberExpr->getQualifierLoc().getBeginLoc(), ID)
+    //      << FixItHint::CreateReplacement(Range, Replacement);
+
+    //  if (std::string FileName = NormalizeFilePath(
+    //          SM.getFilename(memberExpr->getBeginLoc()).str());
+    //      !std::empty(FileName)) {
+
+    //    (void)Replacements[FileName.c_str()].add(
+    //        CreateReplacementFromSourceLocation(
+    //            SM, Range.getBegin(), GetRangeSize(SM, Range,
+    //            CI.getLangOpts()), Replacement));
+    //  }
+
+    //  if (std::string FileName =
+    //          NormalizeFilePath(SM.getFilename(DC->getBeginLoc()).str());
+    //      !std::empty(FileName) && DC->getBraceRange().isValid()) {
+
+    //    (void)Replacements[FileName.c_str()].add(
+    //        CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
+    //  }
+    //}
 
     // llvm::errs() << SM << "\n\n";
 
@@ -268,10 +362,25 @@ public:
     //                        .bind("fnDecl"),
     //                    &Handler);
 
-    Matcher.addMatcher(cxxMemberCallExpr(hasDescendant(
-                           memberExpr(hasDescendant(implicitCastExpr().bind(
-                                          "implicitCastExpr")))
-                               .bind("memberExpr"))),
+    // Matcher.addMatcher(cxxMemberCallExpr(hasDescendant(
+    //                        memberExpr(hasDescendant(implicitCastExpr().bind(
+    //                                       "implicitCastExpr")))
+    //                            .bind("memberExpr"))),
+    //                    &Handler);
+
+    // Matcher.addMatcher(
+    //     varDecl(hasType(namedDecl(hasParent(namespaceDecl(hasName("c3d"))))))
+    //         .bind("varDecl"),
+    //     &Handler);
+
+    // Matcher.addMatcher(callExpr(hasDeclaration(functionDecl(
+    //                                 hasParent(namespaceDecl(hasName("c3d"))))))
+    //                        .bind("callExpr"),
+    //                    &Handler);
+
+    Matcher.addMatcher(declRefExpr(hasDeclaration(varDecl(hasParent(
+                                       namespaceDecl(hasName("c3d"))))))
+                           .bind("declRefExpr"),
                        &Handler);
   }
 
