@@ -37,10 +37,78 @@ std::vector<tooling::TranslationUnitReplacements> TURs;
 
 using ReplacementsMap = std::map<std::string, tooling::Replacements>;
 
-// std::string_view FunctionDefCommentHeader =
-//     "\n//"
-//     "-----------------------------------------------------"
-//     "-------------------------\n/**\n  \n*/\n//---\n";
+std::string FixupWithCase(StringRef Name) {
+  static llvm::Regex Splitter(
+      "([a-z0-9A-Z]*)(_+)|([A-Z]?[a-z0-9]+)([A-Z]|$)|([A-Z]+)([A-Z]|$)");
+
+  llvm::SmallString<256> s = Name;
+  if (s.starts_with("s_") || s.starts_with("c_") || s.starts_with("m_") ||
+      s.starts_with("g_"))
+    s.erase(s.begin(), s.begin() + 2);
+
+  Name = s;
+
+  SmallVector<StringRef, 16> Substrs;
+  Name.split(Substrs, "_", -1, false);
+
+  SmallVector<StringRef, 16> Words;
+  SmallVector<StringRef, 16> Groups;
+  for (auto Substr : Substrs) {
+    while (!Substr.empty()) {
+      Groups.clear();
+      if (!Splitter.match(Substr, &Groups))
+        break;
+
+      if (!Groups[2].empty()) {
+        Words.push_back(Groups[1]);
+        Substr = Substr.substr(Groups[0].size());
+      } else if (!Groups[3].empty()) {
+        Words.push_back(Groups[3]);
+        Substr = Substr.substr(Groups[0].size() - Groups[4].size());
+      } else if (!Groups[5].empty()) {
+        Words.push_back(Groups[5]);
+        Substr = Substr.substr(Groups[0].size() - Groups[6].size());
+      }
+    }
+  }
+
+  if (Words.empty())
+    return Name.str();
+
+  SmallString<256> Fixup;
+
+  for (auto const &Word : Words) {
+    if (&Word == &Words.front()) {
+      Fixup += Word.lower();
+    } else {
+      Fixup += toupper(Word.front());
+      Fixup += Word.substr(1).lower();
+    }
+  }
+
+  return Fixup.str().str();
+}
+
+std::string NormalizeFilePath(const std::string &path) {
+  llvm::SmallString<128> normalized(path);
+  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
+  std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+  return normalized.str().str();
+}
+
+std::string GetSrcFileName(const clang::SourceManager &SM,
+                           clang::SourceLocation LOC) {
+  const auto SrcFileNameOrigin = SM.getFilename(LOC);
+
+  const auto PresumedLoc = SM.getPresumedLoc(LOC).getFilename();
+  const auto SrcFileName = !SrcFileNameOrigin.empty()
+                               ? NormalizeFilePath(SrcFileNameOrigin.data())
+                           : PresumedLoc ? NormalizeFilePath(PresumedLoc)
+                                         : "";
+
+  return SrcFileName;
+}
 
 int GetRangeSize(const SourceManager &Sources, const CharSourceRange &Range,
                  const LangOptions &LangOpts) {
@@ -55,20 +123,6 @@ int GetRangeSize(const SourceManager &Sources, const CharSourceRange &Range,
   return End.second - Start.second;
 }
 
-std::string NormalizeFilePath(const std::string &path) {
-  llvm::SmallString<128> normalized(path);
-  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
-
-  // Canonicalize directory separators (forward slashes considered canonical.)
-  std::replace(normalized.begin(), normalized.end(), '\\', '/');
-
-  return normalized.str().str();
-}
-
-// bool IsAssociatedInclude(std::string_view Src, std::string_view Include) {
-//   return llvm::sys::fs::equivalent(Src, Include);
-// }
-
 tooling::Replacement
 CreateReplacementFromSourceLocation(const SourceManager &Sources,
                                     SourceLocation Start, unsigned Length,
@@ -80,10 +134,12 @@ CreateReplacementFromSourceLocation(const SourceManager &Sources,
     const FileEntryRef Entry = *Sources.getFileEntryRefForID(FileID);
     auto FilePath =
         std::string(Entry ? NormalizeFilePath(Entry.getName().str()) : "");
+    result = Replacement{FilePath, Offset, Length, ReplacementText};
+  } else if (auto FilePath = GetSrcFileName(Sources, Start);
+             !FilePath.empty() && Start.isMacroID()) {
 
-    // const auto FilePath = Sources.getFilename(Sources.getFileLoc(Start));
-    // const auto Offset = Sources.getFileOffset(Start);
-
+    auto Offset = Sources.getFileOffset(
+        Sources.getSpellingLoc(Sources.getMacroArgExpandedLocation(Start)));
     result = Replacement{FilePath, Offset, Length, ReplacementText};
   }
   return result;
@@ -122,229 +178,193 @@ tooling::TranslationUnitReplacements MergeReplacements(
   return Result;
 }
 
+bool CheckAccess(const clang::VarDecl *Decl) {
+  return Decl &&
+         (
+             // Decl->getAccess() == clang::AccessSpecifier::AS_private ||
+             // Decl->getAccess() == clang::AccessSpecifier::AS_protected
+             Decl->getAccess() == clang::AccessSpecifier::AS_none) &&
+         !Decl->getType().isConstQualified();
+  //! Decl->getType().isConstQualified();
+}
+
+bool IsFormated(const clang::VarDecl *Decl, StringRef Prefix) {
+
+  auto Name = Decl ? Decl->getName() : "";
+
+  return !Decl || (!CheckAccess(Decl) ||
+                   (Name.starts_with(Prefix) || Name.starts_with("impl_") ||
+                    Name.starts_with("_wg") || Name.starts_with("Internal")
+
+                    // Name.starts_with("_") || Name.ends_with("_")
+                    // || Name.starts_with("m_") ||
+                    // Name.starts_with("s_") ||
+                    ));
+}
+
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
 public:
   FunctionDeclMatchHandler(ReplacementsMap &Replacements, CompilerInstance &CI)
       : Replacements{Replacements}, CI{CI} {}
 
   void run(const MatchFinder::MatchResult &Result) override {
-    // auto memberExpr =
-    // Result.Nodes.getNodeAs<clang::MemberExpr>("memberExpr"); auto
-    // implicitCastExpr =
-    //     Result.Nodes.getNodeAs<clang::ImplicitCastExpr>("implicitCastExpr");
 
-    // auto varDecl = Result.Nodes.getNodeAs<clang::VarDecl>("varDecl");
-    // auto callExpr = Result.Nodes.getNodeAs<clang::CallExpr>("callExpr");
-    auto declRefExpr =
+    // auto *FieldDecl = Result.Nodes.getNodeAs<clang::FieldDecl>("fieldDecl");
+    auto *VarDecl = Result.Nodes.getNodeAs<clang::VarDecl>("varDecl");
+    auto *MemberExpr = Result.Nodes.getNodeAs<clang::MemberExpr>("memberExpr");
+    auto *declRefExpr =
         Result.Nodes.getNodeAs<clang::DeclRefExpr>("declRefExpr");
+
+    // auto *CXXConstructorDecl =
+    //     Result.Nodes.getNodeAs<clang::CXXConstructorDecl>("cxxConstructorDecl");
 
     auto &&SM = *Result.SourceManager;
 
-    const auto SrcFileNameOrigin =
-        // SM.getFilename(declRefExpr->getBeginLoc())
-        SM.getFilename(SM.getFileLoc(declRefExpr->getBeginLoc()));
+    const auto Loc = VarDecl->getBeginLoc();
 
-    // const auto SrcFileNameOrigin =
-    //     SM.getFilename(callExpr->getSourceRange().getBegin());
+    const auto SrcFileName = GetSrcFileName(SM, Loc);
 
-    const auto SrcFileName = !SrcFileNameOrigin.empty()
-                                 ? NormalizeFilePath(SrcFileNameOrigin.data())
-                                 : "";
+    if (SrcFileName.find("/Source/") != std::string::npos) {
 
-    // llvm::errs() << callExpr->du << "\n\n";
+      // VarDecl->dump();
 
-    // llvm::errs() <<
-    // llvm::StringRef{SM.getCharacterData(declRefExpr->getBeginLoc())} <<
-    // "\n\n";
+      // if (MemberExpr)
+      //   MemberExpr->dump();
 
-    if (SrcFileName.find("/Source/") != std::string::npos
-        //&& callExp->getAsString().find("c3d::") == std::string::npos
-        //&& !llvm::StringRef{SM.getCharacterData(callExpr->getBeginLoc())}
-        && !llvm::StringRef{SM.getCharacterData(declRefExpr->getBeginLoc())}
-                .starts_with("c3d::")) {
-      // varDecl->dump();
-      // varDecl->getLocation().dump(SM);
+      // if (declRefExpr)
+      //   declRefExpr->dump();
 
-      auto &&DE = Result.SourceManager->getDiagnostics();
-      auto ID =
-          DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "use c3d::");
+      std::vector<clang::SourceRange> Ranges;
 
-      auto InstertBegin = declRefExpr->getBeginLoc();
-      // auto InstertBegin = declRefExpr->getBeginLoc();
-      //  auto InstertBegin = callExpr->getBeginLoc();
-      auto Code = "c3d::";
+      // if (CXXConstructorDecl && !CXXConstructorDecl->isDefaulted()) {
 
-      DE.Report(InstertBegin, ID)
-          << FixItHint::CreateInsertion(InstertBegin, Code);
+      //  for (auto *I : CXXConstructorDecl->inits()) {
 
-      if (
-          // NormalizeFilePath(SM.getFilename(callExpr->getBeginLoc()).str());
-          !std::empty(SrcFileName)) {
+      //    if (auto *Decl = I->getMember();
+      //        Decl && !I->isInClassMemberInitializer()) {
 
-        (void)Replacements[SrcFileName.c_str()].add(
-            CreateReplacementFromSourceLocation(SM, InstertBegin, 0, Code));
+      //      if (!IsFormated(Decl)) {
 
-        // const auto &&[FileID, Offset] = SM.getDecomposedLoc(InstertBegin);
-        // const FileEntryRef Entry = *SM.getFileEntryRefForID(FileID);
-        //  auto FilePath =
-        //  std::string(Entry ? NormalizeFilePath(Entry.getName().str()) : "");
+      //        if (I->getSourceOrder() != -1) {
+      //          Ranges.emplace_back(I->getSourceRange().getBegin(),
+      //                              I->getLParenLoc());
+      //        }
 
-        // llvm::errs() << Offset << "\n\n";
-        //  FileID->
+      //        Ranges.emplace_back(
+      //            clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
+      //      }
+      //    }
+      //  }
+      //}
 
-        //(void)Replacements[SrcFileName.c_str()].add({});
+      {
+        {
+          constexpr StringRef Prefix = "g_";
+          // constexpr StringRef Prefix = "c_";
+          //  constexpr StringRef Prefix = "s_";
+
+          auto &&DE = Result.SourceManager->getDiagnostics();
+
+          auto ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                       "add prefix");
+
+          if (VarDecl)
+            if (auto *Decl = VarDecl->getCanonicalDecl())
+              if (Decl && !IsFormated(Decl, Prefix) &&
+                  !Decl->getLocation().isMacroID()) {
+
+                // auto End = Decl->getName().size();
+
+                if (Decl) {
+                  Ranges.emplace_back(clang::SourceRange(Decl->getLocation(),
+                                                         Decl->getEndLoc()));
+                }
+
+                if (VarDecl) {
+                  Ranges.emplace_back(clang::SourceRange(VarDecl->getLocation(),
+                                                         VarDecl->getEndLoc()));
+                }
+
+                if (declRefExpr) {
+                  Ranges.emplace_back(declRefExpr->getLocation());
+                }
+
+                if (MemberExpr) {
+                  Ranges.emplace_back(MemberExpr->getMemberLoc());
+                }
+              }
+
+          for (auto SourceRange : Ranges) {
+
+            // if (SourceRange.getBegin().isMacroID()) {
+            //   SourceRange =
+            //       SM.getImmediateExpansionRange(SourceRange.getBegin())
+            //           .getAsRange();
+            // }
+
+            if (SourceRange.getEnd().isMacroID() &&
+                !SourceRange.getBegin().isMacroID()) {
+              SourceRange.setEnd(
+                  SM.getImmediateExpansionRange(SourceRange.getEnd())
+                      .getAsRange()
+                      .getEnd());
+            }
+
+            auto Range = CharSourceRange::getTokenRange(SourceRange);
+
+            if (auto SrcFileName = GetSrcFileName(SM, Range.getBegin());
+                !std::empty(SrcFileName) &&
+                SrcFileName.find("/Source/") != std::string::npos) {
+
+              auto Size = GetRangeSize(SM, Range, CI.getLangOpts());
+
+              if (Size > 0) {
+
+                std::string Code = Prefix.str();
+                // Code +=
+                // std::string_view{SM.getCharacterData(Range.getBegin()),
+                // (size_t)Size};
+
+                auto NewCode = std::string_view{
+                    SM.getCharacterData(Range.getBegin()), (size_t)Size};
+
+                if (auto assignPos = NewCode.find_first_of("{([= ");
+                    assignPos != std::wstring_view::npos) {
+                  Code += FixupWithCase({NewCode.data(), assignPos});
+                  Code.append(NewCode.begin() + assignPos, NewCode.end());
+                } else {
+                  Code += FixupWithCase(NewCode);
+                }
+
+                DE.Report(Range.getBegin(), ID)
+                    << FixItHint::CreateReplacement(Range, Code);
+
+                (void)Replacements[SrcFileName.c_str()].add(
+                    CreateReplacementFromSourceLocation(
+                        SM, Range.getBegin(),
+                        GetRangeSize(SM, Range, CI.getLangOpts()), Code));
+
+                auto R = CreateReplacementFromSourceLocation(
+                    SM, Range.getBegin(),
+                    GetRangeSize(SM, Range, CI.getLangOpts()), Code);
+
+                // llvm::errs()
+                //   << "FilePath: "
+                //   << R.getFilePath()
+                //   << " Offset: "
+                //   << R.getOffset()
+                //   << " Length: "
+                //   << R.getLength()
+                //   << " ReplacementText: "
+                //   << R.getReplacementText()
+                //   << '\n'
+                //   ;
+              }
+            }
+          }
+        }
       }
     }
-
-    // if (SrcFileName.find("/Source/") != std::string::npos &&
-    //     varDecl->getType().getAsString().find("c3d::") == std::string::npos)
-    //     {
-    //   // varDecl->dump();
-    //   // varDecl->getLocation().dump(SM);
-
-    //  auto &&DE = Result.SourceManager->getDiagnostics();
-    //  auto ID =
-    //      DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "use c3d::");
-
-    //  auto InstertBegin = varDecl->getTypeSpecStartLoc().getLocWithOffset(-1);
-    //  auto Code = " c3d::";
-
-    //  DE.Report(InstertBegin, ID)
-    //      << FixItHint::CreateInsertion(InstertBegin, Code);
-
-    //  if (std::string FileName =
-    //          NormalizeFilePath(SM.getFilename(varDecl->getBeginLoc()).str());
-    //      !std::empty(FileName)) {
-
-    //    (void)Replacements[FileName.c_str()].add(
-    //        CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
-    //  }
-    //}
-
-    //    //if (SrcFileName.contains("Source\\") && memberExpr->getQualifier()
-    //    && memberExpr->getQualifier()->getKind() ==
-    //        clang::NestedNameSpecifier::Super) {
-
-    //  const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
-    //  const auto *RD =
-    //      cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
-
-    //  auto &&DE = Result.SourceManager->getDiagnostics();
-    //  const unsigned ID =
-    //  DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
-    //                                         "__super is ms-extension");
-
-    //  const auto &&DC = implicitCastExpr->getBestDynamicClassType();
-
-    //  const std::string BaseClass = "BaseClass";
-    //  // const std::string BaseClass = DC->getNameAsString() + "Base";
-    //  const std::string Code =
-    //      std::string{DC->isStruct() ? "\nprivate:\n" : ""} + "\nusing " +
-    //      BaseClass + " = " +
-    //      // Base->getType()->getCanonicalTypeInternal().getAsString() + ";";
-    //      RD->getName().str() + ";\n" +
-    //      std::string{DC->isStruct() ? "\npublic:\n" : ""};
-
-    //  auto InstertBegin = DC->getBraceRange().getBegin().getLocWithOffset(1);
-
-    //  // auto M = cxxRecordDecl(anyOf(
-    //  //     has(typeAliasDecl(hasName("bazBase")).bind("xxx")), anything()));
-
-    //  DE.Report(InstertBegin, ID)
-    //      << FixItHint::CreateInsertion(InstertBegin, Code);
-
-    //  // if (std::string FileName = NormalizeFilePath(
-    //  //         SM.getFilename(memberExpr->getBeginLoc()).str());
-    //  //     !std::empty(FileName)) {
-
-    //  //  auto err = Replacements[FileName.c_str()].add(
-    //  //      CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
-    //  //}
-
-    //  auto Range = CharSourceRange::getTokenRange(clang::SourceRange(
-    //      memberExpr->getQualifierLoc().getBeginLoc(),
-    //      memberExpr->getQualifierLoc().getEndLoc().getLocWithOffset(-2)));
-
-    //  std::string Replacement = "/* __super */ ";
-    //  // Replacement +=
-    //  //     implicitCastExpr->getType().getBaseTypeIdentifier()->getName();
-    //  // const CXXBaseSpecifier *Base = *implicitCastExpr->path().begin();
-    //  // const auto *RD =
-    //  //
-    //  cast<CXXRecordDecl>(Base->getType()->castAs<RecordType>()->getDecl());
-    //  // Replacement += RD->getName();
-    //  Replacement += BaseClass;
-
-    //  DE.Report(memberExpr->getQualifierLoc().getBeginLoc(), ID)
-    //      << FixItHint::CreateReplacement(Range, Replacement);
-
-    //  if (std::string FileName = NormalizeFilePath(
-    //          SM.getFilename(memberExpr->getBeginLoc()).str());
-    //      !std::empty(FileName)) {
-
-    //    (void)Replacements[FileName.c_str()].add(
-    //        CreateReplacementFromSourceLocation(
-    //            SM, Range.getBegin(), GetRangeSize(SM, Range,
-    //            CI.getLangOpts()), Replacement));
-    //  }
-
-    //  if (std::string FileName =
-    //          NormalizeFilePath(SM.getFilename(DC->getBeginLoc()).str());
-    //      !std::empty(FileName) && DC->getBraceRange().isValid()) {
-
-    //    (void)Replacements[FileName.c_str()].add(
-    //        CreateReplacementFromSourceLocation(SM, InstertBegin, 1, Code));
-    //  }
-    //}
-
-    // llvm::errs() << SM << "\n\n";
-
-    // if (std::string FileName =
-    //         NormalizeFilePath(SM->getFilename(Decl->getBeginLoc()).str());
-    //     !std::empty(FileName)) {
-
-    //  auto Expansion =
-    //      SM->getSLocEntry(SM->getFileID(Decl->getSourceRange().getBegin()))
-    //          .getExpansion();
-
-    //  if (Decl->getParent() && !Decl->getParent()->isLambda() &&
-    //      Decl->getCanonicalDecl() != Decl &&
-    //      !Expansion.isMacroArgExpansion()) {
-
-    //    if (!Result.Context->getRawCommentForDeclNoCache(Decl)) {
-    //      auto &&DE = Result.SourceManager->getDiagnostics();
-    //      const unsigned ID = DE.getCustomDiagID(
-    //          clang::DiagnosticsEngine::Warning, "No Comment!");
-
-    //      DE.Report(Decl->getBeginLoc(), ID)
-    //          << "Add " << FunctionDefCommentHeader
-    //          << FixItHint::CreateInsertion(Decl->getBeginLoc(),
-    //                                        FunctionDefCommentHeader);
-
-    //      auto err = Replacements[FileName.c_str()].add(
-    //          CreateReplacementFromSourceLocation(*SM, Decl->getBeginLoc(), 0,
-    //                                              FunctionDefCommentHeader));
-
-    //      llvm::errs() << Decl->getNameAsString() << "\n";
-    //    } else {
-    //      auto RawComment = Result.Context->getRawCommentForDeclNoCache(Decl);
-    //      auto Comment = RawComment->getRawText(*SM);
-
-    //      if (!Comment.contains("/**")) {
-    //        llvm::errs() << Comment << "\n"
-    //                     << Decl->getNameAsString() << "\n\n";
-
-    //        auto Range =
-    //            CharSourceRange::getTokenRange(RawComment->getSourceRange());
-
-    //        Replacements[FileName.c_str()].add(
-    //            CreateReplacementFromSourceLocation(
-    //                *SM, RawComment->getBeginLoc(),
-    //                GetRangeSize(*SM, Range, CI.getLangOpts()), ""));
-    //      }
-    //    }
-    //  }
-    //}
   }
 
 private:
@@ -357,31 +377,47 @@ public:
   XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
       : Replacements{Replacements}, Handler{Replacements, CI} {
 
-    // Matcher.addMatcher(cxxMethodDecl(isDefinition(), unless(isImplicit()),
-    //                                  unless(isExpansionInSystemHeader()))
-    //                        .bind("fnDecl"),
-    //                    &Handler);
+    // Matcher.addMatcher(
+    //     traverse(TK_IgnoreUnlessSpelledInSource,
+    //              memberExpr(hasDeclaration(fieldDecl().bind("fieldDecl")))
+    //                  .bind("memberExpr")),
+    //     &Handler);
 
-    // Matcher.addMatcher(cxxMemberCallExpr(hasDescendant(
-    //                        memberExpr(hasDescendant(implicitCastExpr().bind(
-    //                                       "implicitCastExpr")))
-    //                            .bind("memberExpr"))),
+    // auto ClassStaticVarDecl =
+    //     varDecl(isStaticStorageClass(), unless(isStaticLocal()),
+    //             hasParent(cxxRecordDecl()));
+
+    auto ClassStaticVarDecl =
+        varDecl(anyOf(allOf(isStaticStorageClass(), unless(isStaticLocal())),
+                      has(nestedNameSpecifierLoc())));
+
+    Matcher.addMatcher(
+        traverse(TK_IgnoreUnlessSpelledInSource,
+                 memberExpr(hasDeclaration(ClassStaticVarDecl.bind("varDecl")))
+                     .bind("memberExpr")),
+        &Handler);
+
+    Matcher.addMatcher(
+        traverse(TK_IgnoreUnlessSpelledInSource,
+                 declRefExpr(hasDeclaration(ClassStaticVarDecl.bind("varDecl")))
+                     .bind("declRefExpr")),
+        &Handler);
+
+    Matcher.addMatcher(traverse(TK_IgnoreUnlessSpelledInSource,
+                                ClassStaticVarDecl.bind("varDecl")),
+                       &Handler);
+
+    // Matcher.addMatcher(traverse(TK_IgnoreUnlessSpelledInSource,
+    //                             varDecl(anyOf(allOf(isStaticStorageClass(),
+    //                                                 unless(isStaticLocal())),
+    //                                           has(nestedNameSpecifierLoc())))
+    //                                 .bind("varDecl")),
     //                    &Handler);
 
     // Matcher.addMatcher(
-    //     varDecl(hasType(namedDecl(hasParent(namespaceDecl(hasName("c3d"))))))
-    //         .bind("varDecl"),
+    //     traverse(TK_IgnoreUnlessSpelledInSource,
+    //              cxxConstructorDecl().bind("cxxConstructorDecl")),
     //     &Handler);
-
-    // Matcher.addMatcher(callExpr(hasDeclaration(functionDecl(
-    //                                 hasParent(namespaceDecl(hasName("c3d"))))))
-    //                        .bind("callExpr"),
-    //                    &Handler);
-
-    Matcher.addMatcher(declRefExpr(hasDeclaration(varDecl(hasParent(
-                                       namespaceDecl(hasName("c3d"))))))
-                           .bind("declRefExpr"),
-                       &Handler);
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
@@ -394,165 +430,11 @@ private:
   ReplacementsMap &Replacements;
 };
 
-class Find_Includes : public PPCallbacks {
-public:
-  Find_Includes(CompilerInstance &CI, ReplacementsMap &Replacements)
-      : CI{CI}, Replacements{Replacements} {}
-
-  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
-                          StringRef FileName, bool IsAngled,
-                          CharSourceRange FilenameRange,
-                          OptionalFileEntryRef File, StringRef SearchPath,
-                          StringRef RelativePath, const clang::Module *Imported,
-                          SrcMgr::CharacteristicKind FileType) override {
-
-    auto &DE = CI.getDiagnostics();
-    auto &SM = CI.getSourceManager();
-
-    const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
-                                           "Incorrect Include Style");
-
-    auto SrcFileName = SM.getFilename(FilenameRange.getBegin());
-
-    SmallString<512> Src = SrcFileName;
-    llvm::sys::path::replace_extension(Src, ".h");
-
-    SrcFileName = NormalizeFilePath(SrcFileName.str()).c_str();
-
-    if (llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
-      if (SM.isInMainFile(HashLoc)) {
-        ++I;
-
-        std::string Replacement =
-            (llvm::Twine("\"") + llvm::sys::path::filename(FileName) + "\"")
-                .str();
-
-        if (I > 1) {
-          DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
-              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-          auto Range = CharSourceRange::getTokenRange(
-              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-          auto err = Replacements[SrcFileName.str()].add(
-              CreateReplacementFromSourceLocation(
-                  SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()), ""));
-
-        } else if (llvm::sys::path::filename(FileName) != FileName) {
-          {
-            DE.Report(FilenameRange.getBegin(), ID)
-                << FixItHint::CreateReplacement(FilenameRange.getAsRange(),
-                                                Replacement);
-
-            auto err = Replacements[SrcFileName.str()].add(
-                CreateReplacementFromSourceLocation(
-                    SM, FilenameRange.getBegin(),
-                    GetRangeSize(SM, FilenameRange, CI.getLangOpts()),
-                    Replacement));
-          }
-        }
-
-      } else {
-        if (FileType == SrcMgr::CharacteristicKind::C_User &&
-            !SrcFileName.ends_with(".cpp")) {
-          DE.Report(FilenameRange.getBegin(), ID) << FixItHint::CreateRemoval(
-              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-          auto Range = CharSourceRange::getTokenRange(
-              clang::SourceRange(HashLoc, FilenameRange.getEnd()));
-
-          auto err = Replacements[SrcFileName.str()].add(
-              CreateReplacementFromSourceLocation(
-                  SM, HashLoc, GetRangeSize(SM, Range, CI.getLangOpts()), ""));
-        }
-      }
-    } else if (FileType == SrcMgr::CharacteristicKind::C_User) {
-
-      if (!llvm::sys::fs::equivalent(Src, SearchPath + "/" + FileName)) {
-        // if (SM.isInMainFile(HashLoc)) {
-
-        SmallString<512> path = SearchPath;
-        path += "/";
-        path += FileName;
-        llvm::sys::fs::make_absolute(path);
-        llvm::sys::path::remove_dots(path, true);
-
-        path = llvm::sys::path::convert_to_slash(
-            path, llvm::sys::path::Style::windows_backslash);
-
-        if (auto pos = path.find(".conan"); pos == -1)
-          if (auto pos = path.find("AfxCompat.h"); pos == -1)
-            if (auto pos = path.find("AfxExCompat.h"); pos == -1)
-              if (auto pos = path.find("BCGIncludeFull.h"); pos == -1)
-
-                if (auto pos = path.find("/Source/"); pos != -1) {
-                  path = path.substr(pos + 8);
-
-                  size_t offset =
-                      (path.starts_with("2D/") || path.starts_with("3D/") ||
-                       path.starts_with("UI/"))
-                          ? 3
-                      : path.starts_with("API/")    ? 4
-                      : path.starts_with("Text/")   ? 5
-                      : path.starts_with("Tests/")  ? 6
-                      : path.starts_with("Render/") ? 7
-                                                    : 0;
-                  path = path.substr(offset);
-
-                  if (auto pos = path.find("/"); pos != -1) {
-
-                    offset = (path.substr(0, pos + 1) ==
-                                      path.substr(pos + 1, pos + 1)
-                                  ? pos + 1
-                                  : 0);
-
-                    path = path.substr(offset);
-
-                    std::string Replacement =
-                        (llvm::Twine("<") + path + ">").str();
-
-                    if (FileName != path || !IsAngled) {
-                      DE.Report(FilenameRange.getBegin(), ID)
-                          << FixItHint::CreateReplacement(
-                                 FilenameRange.getAsRange(), Replacement);
-
-                      auto err = Replacements[SrcFileName.str()].add(
-                          CreateReplacementFromSourceLocation(
-                              SM, FilenameRange.getBegin(),
-                              GetRangeSize(SM, FilenameRange, CI.getLangOpts()),
-                              Replacement));
-                    }
-                  }
-                }
-        //}
-      }
-    }
-  }
-
-private:
-  CompilerInstance &CI;
-  ReplacementsMap &Replacements;
-  size_t I = 0;
-};
-
-// For each source file provided to the tool, a new FrontendAction is created.
 class XFrontendAction : public ASTFrontendAction {
-  // class XFrontendAction : public PreprocessOnlyAction {
-
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
     return std::make_unique<XASTConsumer>(Replacements, CI);
-  }
-
-  bool BeginSourceFileAction(CompilerInstance &CI) override {
-
-    // CI.getLangOpts().CommentOpts.ParseAllComments = true;
-
-    // Preprocessor &PP = CI.getPreprocessor();
-    // PP.addPPCallbacks(std::make_unique<Find_Includes>(CI, Replacements));
-
-    return true;
   }
 
   void EndSourceFileAction() override {
@@ -564,7 +446,7 @@ public:
       }
 
     std::scoped_lock Lock{MU};
-    TURs.push_back(TUR);
+    TURs.emplace_back(std::move(TUR));
   }
 
 private:
