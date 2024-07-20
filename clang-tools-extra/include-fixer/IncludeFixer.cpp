@@ -188,12 +188,12 @@ public:
     if (SrcFileName.find("/Source/") != std::string::npos) {
       std::vector<clang::SourceRange> Ranges;
 
-      if (CXXConstructorDecl) {
+      if (CXXConstructorDecl && !CXXConstructorDecl->isDefaulted()) {
         for (auto *I : CXXConstructorDecl->inits()) {
 
-          if (auto *Decl = I->getMember(); !CXXConstructorDecl->decls_empty() &&
-                                           Decl &&
-                                           !I->isInClassMemberInitializer()) {
+          if (auto *Decl =
+                  I->getMember(); /*!CXXConstructorDecl->decls_empty() &&*/
+              Decl && !I->isInClassMemberInitializer()) {
 
             if (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
                 Decl->getAccess() == clang::AccessSpecifier::AS_private)
@@ -221,13 +221,10 @@ public:
                   Decl->getAccess() == clang::AccessSpecifier::AS_private)
                 if (Decl && !IsFormated(Decl)) {
                   if (Decl) {
-                    Ranges.emplace_back(
-                        clang::SourceRange(Decl->getLocation(),
-                                           Decl->getLocation().getLocWithOffset(
-                                               Decl->getName().size())));
+                    Ranges.emplace_back(clang::SourceRange(Decl->getLocation(),
+                                                           Decl->getEndLoc()));
                   }
                   if (MemberExpr) {
-                    Ranges.emplace_back(MemberExpr->getSourceRange());
                     Ranges.emplace_back(MemberExpr->getMemberLoc());
                   }
                 }
@@ -238,8 +235,15 @@ public:
             auto Size = GetRangeSize(SM, Range, CI.getLangOpts());
 
             SmallString<32> Code{"m_"};
-            Code += FixupWithCase(
-                {SM.getCharacterData(SourceRange.getBegin()), (size_t)Size});
+
+            // StringRef Name = {SM.getCharacterData(SourceRange.getBegin()),
+            //                   (size_t)Size};
+            // if (auto Pos = Name.find('='); Pos != StringRef::npos)
+            //   Size = Pos;
+            // Code += FixupWithCase(
+            //     {SM.getCharacterData(SourceRange.getBegin()), (size_t)Size});
+
+            Code += {SM.getCharacterData(SourceRange.getBegin()), (size_t)Size};
 
             if (auto SrcFileName = GetSrcFileName(SM, SourceRange.getBegin());
                 !std::empty(SrcFileName)) {
