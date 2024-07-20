@@ -189,6 +189,10 @@ public:
       std::vector<clang::SourceRange> Ranges;
 
       if (CXXConstructorDecl && !CXXConstructorDecl->isDefaulted()) {
+
+        // const auto Size = std::distance(CXXConstructorDecl->inits().begin(),
+        //                                 CXXConstructorDecl->inits().begin());
+
         for (auto *I : CXXConstructorDecl->inits()) {
 
           if (auto *Decl =
@@ -199,7 +203,12 @@ public:
                 Decl->getAccess() == clang::AccessSpecifier::AS_private)
 
               if (!IsFormated(Decl)) {
-                Ranges.emplace_back(I->getSourceRange());
+
+                // if (Size > 1)
+
+                if (I->getSourceOrder() != -1)
+                  Ranges.emplace_back(I->getSourceRange());
+                // Ranges.emplace_back(I->getSourceRange());
 
                 Ranges.emplace_back(
                     clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
@@ -231,36 +240,35 @@ public:
 
           for (auto SourceRange : Ranges) {
 
-            auto Range = CharSourceRange::getTokenRange(SourceRange);
-            auto Size = GetRangeSize(SM, Range, CI.getLangOpts());
+            if (SourceRange.isValid())
+              if (auto SrcFileName = GetSrcFileName(SM, SourceRange.getBegin());
+                  !std::empty(SrcFileName) &&
+                  SrcFileName.find("/Source/") != std::string::npos) {
 
-            SmallString<32> Code{"m_"};
+                auto Range = CharSourceRange::getTokenRange(SourceRange);
+                auto Size = GetRangeSize(SM, Range, CI.getLangOpts());
 
-            // StringRef Name = {SM.getCharacterData(SourceRange.getBegin()),
-            //                   (size_t)Size};
-            // if (auto Pos = Name.find('='); Pos != StringRef::npos)
-            //   Size = Pos;
-            // Code += FixupWithCase(
-            //     {SM.getCharacterData(SourceRange.getBegin()), (size_t)Size});
+                if (Size > 0) {
 
-            Code += {SM.getCharacterData(SourceRange.getBegin()), (size_t)Size};
+                  std::string Code{"m_"};
 
-            if (auto SrcFileName = GetSrcFileName(SM, SourceRange.getBegin());
-                !std::empty(SrcFileName)) {
+                  // llvm::errs() << SrcFileName << '\n';
+                  // llvm::errs() << Size << '\n';
 
-              DE.Report(SourceRange.getBegin(), ID)
-                  << FixItHint::CreateInsertion(SourceRange.getBegin(), Code);
+                  Code += std::string_view{
+                      SM.getCharacterData(SourceRange.getBegin()),
+                      (size_t)Size};
 
-              (void)Replacements[SrcFileName.c_str()].add(
-                  CreateReplacementFromSourceLocation(
-                      SM, SourceRange.getBegin(),
-                      GetRangeSize(SM, Range, CI.getLangOpts()), Code));
+                  DE.Report(SourceRange.getBegin(), ID)
+                      << FixItHint::CreateInsertion(SourceRange.getBegin(),
+                                                    Code);
 
-              //(void)Replacements[SrcFileName.c_str()].add(
-              //    CreateReplacementFromSourceLocation(
-              //        SM, SourceRange.getBegin(),
-              //        1 /*GetRangeSize(SM, Range, CI.getLangOpts())*/, Code));
-            }
+                  (void)Replacements[SrcFileName.c_str()].add(
+                      CreateReplacementFromSourceLocation(
+                          SM, SourceRange.getBegin(),
+                          GetRangeSize(SM, Range, CI.getLangOpts()), Code));
+                }
+              }
           }
         }
       }
