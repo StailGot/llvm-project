@@ -212,7 +212,9 @@ public:
               if (!IsFormated(Decl)) {
 
                 if (I->getSourceOrder() != -1)
-                  Ranges.emplace_back(I->getSourceRange());
+                {
+                  Ranges.emplace_back(I->getSourceRange().getBegin(), I->getLParenLoc());
+                }
 
                 Ranges.emplace_back(
                     clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
@@ -270,13 +272,30 @@ public:
                 Code += std::string_view{SM.getCharacterData(Range.getBegin()),
                                          (size_t)Size};
 
-                DE.Report(Range.getBegin(), ID)
-                    << FixItHint::CreateReplacement(Range, Code);
+                //DE.Report(Range.getBegin(), ID)
+                //    << FixItHint::CreateReplacement(Range, Code);
 
                 (void)Replacements[SrcFileName.c_str()].add(
                     CreateReplacementFromSourceLocation(
                         SM, Range.getBegin(),
                         GetRangeSize(SM, Range, CI.getLangOpts()), Code));
+
+                auto R = CreateReplacementFromSourceLocation(
+                        SM, Range.getBegin(),
+                        GetRangeSize(SM, Range, CI.getLangOpts()), Code);
+
+                llvm::errs()
+                  << "FilePath: "
+                  << R.getFilePath()
+                  << " Offset: "
+                  << R.getOffset()
+                  << " Length: "
+                  << R.getLength()
+                  << " ReplacementText: "
+                  << R.getReplacementText()
+                  << '\n'
+                  ;
+
               }
             }
           }
