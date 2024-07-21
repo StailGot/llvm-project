@@ -244,11 +244,19 @@ public:
 
           for (auto SourceRange : Ranges) {
 
-            auto Range = CharSourceRange::getTokenRange(SourceRange);
-
             if (SourceRange.getBegin().isMacroID()) {
-              // Range = SM.getImmediateExpansionRange(SourceRange.getBegin());
+              // SourceRange =
+              // SM.getImmediateExpansionRange(SourceRange.getBegin()).getAsRange();
             }
+
+            if (SourceRange.getEnd().isMacroID() && !SourceRange.getBegin().isMacroID()) {
+              SourceRange.setEnd(
+                  SM.getImmediateExpansionRange(SourceRange.getEnd())
+                      .getAsRange()
+                      .getEnd());
+            }
+
+            auto Range = CharSourceRange::getTokenRange(SourceRange);
 
             if (auto SrcFileName = GetSrcFileName(SM, Range.getBegin());
                 !std::empty(SrcFileName) &&
