@@ -82,6 +82,27 @@ std::string FixupWithCase(StringRef Name) {
   return Fixup.str().str();
 }
 
+std::string NormalizeFilePath(const std::string &path) {
+  llvm::SmallString<128> normalized(path);
+  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
+  std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+  return normalized.str().str();
+}
+
+std::string GetSrcFileName(const clang::SourceManager &SM,
+                           clang::SourceLocation LOC) {
+  const auto SrcFileNameOrigin = SM.getFilename(LOC);
+
+  const auto PresumedLoc = SM.getPresumedLoc(LOC).getFilename();
+  const auto SrcFileName = !SrcFileNameOrigin.empty()
+                               ? NormalizeFilePath(SrcFileNameOrigin.data())
+                           : PresumedLoc ? NormalizeFilePath(PresumedLoc)
+                                         : "";
+
+  return SrcFileName;
+}
+
 int GetRangeSize(const SourceManager &Sources, const CharSourceRange &Range,
                  const LangOptions &LangOpts) {
   SourceLocation SpellingBegin = Sources.getSpellingLoc(Range.getBegin());
@@ -95,13 +116,6 @@ int GetRangeSize(const SourceManager &Sources, const CharSourceRange &Range,
   return End.second - Start.second;
 }
 
-std::string NormalizeFilePath(const std::string &path) {
-  llvm::SmallString<128> normalized(path);
-  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
-  std::replace(normalized.begin(), normalized.end(), '\\', '/');
-  return normalized.str().str();
-}
-
 tooling::Replacement
 CreateReplacementFromSourceLocation(const SourceManager &Sources,
                                     SourceLocation Start, unsigned Length,
@@ -113,6 +127,12 @@ CreateReplacementFromSourceLocation(const SourceManager &Sources,
     const FileEntryRef Entry = *Sources.getFileEntryRefForID(FileID);
     auto FilePath =
         std::string(Entry ? NormalizeFilePath(Entry.getName().str()) : "");
+    result = Replacement{FilePath, Offset, Length, ReplacementText};
+  } else if (auto FilePath = GetSrcFileName(Sources, Start);
+             !FilePath.empty() && Start.isMacroID()) {
+
+    auto Offset = Sources.getFileOffset(
+        Sources.getSpellingLoc(Sources.getMacroArgExpandedLocation(Start)));
     result = Replacement{FilePath, Offset, Length, ReplacementText};
   }
   return result;
@@ -151,15 +171,6 @@ tooling::TranslationUnitReplacements MergeReplacements(
   return Result;
 }
 
-std::string GetSrcFileName(clang::SourceManager &SM,
-                           clang::SourceLocation LOC) {
-  const auto SrcFileNameOrigin = SM.getFilename(LOC);
-  const auto SrcFileName = !SrcFileNameOrigin.empty()
-                               ? NormalizeFilePath(SrcFileNameOrigin.data())
-                               : "";
-  return SrcFileName;
-}
-
 bool IsFormated(const clang::FieldDecl *Decl) {
   return !Decl ||
          (Decl->getName().starts_with("m_") ||
@@ -190,13 +201,9 @@ public:
 
       if (CXXConstructorDecl && !CXXConstructorDecl->isDefaulted()) {
 
-        // const auto Size = std::distance(CXXConstructorDecl->inits().begin(),
-        //                                 CXXConstructorDecl->inits().begin());
-
         for (auto *I : CXXConstructorDecl->inits()) {
 
-          if (auto *Decl =
-                  I->getMember(); /*!CXXConstructorDecl->decls_empty() &&*/
+          if (auto *Decl = I->getMember();
               Decl && !I->isInClassMemberInitializer()) {
 
             if (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
@@ -204,11 +211,8 @@ public:
 
               if (!IsFormated(Decl)) {
 
-                // if (Size > 1)
-
                 if (I->getSourceOrder() != -1)
                   Ranges.emplace_back(I->getSourceRange());
-                // Ranges.emplace_back(I->getSourceRange());
 
                 Ranges.emplace_back(
                     clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
@@ -240,35 +244,33 @@ public:
 
           for (auto SourceRange : Ranges) {
 
-            if (SourceRange.isValid())
-              if (auto SrcFileName = GetSrcFileName(SM, SourceRange.getBegin());
-                  !std::empty(SrcFileName) &&
-                  SrcFileName.find("/Source/") != std::string::npos) {
+            auto Range = CharSourceRange::getTokenRange(SourceRange);
 
-                auto Range = CharSourceRange::getTokenRange(SourceRange);
-                auto Size = GetRangeSize(SM, Range, CI.getLangOpts());
+            if (SourceRange.getBegin().isMacroID()) {
+              // Range = SM.getImmediateExpansionRange(SourceRange.getBegin());
+            }
 
-                if (Size > 0) {
+            if (auto SrcFileName = GetSrcFileName(SM, Range.getBegin());
+                !std::empty(SrcFileName) &&
+                SrcFileName.find("/Source/") != std::string::npos) {
 
-                  std::string Code{"m_"};
+              auto Size = GetRangeSize(SM, Range, CI.getLangOpts());
 
-                  // llvm::errs() << SrcFileName << '\n';
-                  // llvm::errs() << Size << '\n';
+              if (Size > 0) {
 
-                  Code += std::string_view{
-                      SM.getCharacterData(SourceRange.getBegin()),
-                      (size_t)Size};
+                std::string Code{"m_"};
+                Code += std::string_view{SM.getCharacterData(Range.getBegin()),
+                                         (size_t)Size};
 
-                  DE.Report(SourceRange.getBegin(), ID)
-                      << FixItHint::CreateInsertion(SourceRange.getBegin(),
-                                                    Code);
+                DE.Report(Range.getBegin(), ID)
+                    << FixItHint::CreateReplacement(Range, Code);
 
-                  (void)Replacements[SrcFileName.c_str()].add(
-                      CreateReplacementFromSourceLocation(
-                          SM, SourceRange.getBegin(),
-                          GetRangeSize(SM, Range, CI.getLangOpts()), Code));
-                }
+                (void)Replacements[SrcFileName.c_str()].add(
+                    CreateReplacementFromSourceLocation(
+                        SM, Range.getBegin(),
+                        GetRangeSize(SM, Range, CI.getLangOpts()), Code));
               }
+            }
           }
         }
       }
