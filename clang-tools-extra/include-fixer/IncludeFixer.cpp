@@ -211,9 +211,9 @@ public:
 
               if (!IsFormated(Decl)) {
 
-                if (I->getSourceOrder() != -1)
-                {
-                  Ranges.emplace_back(I->getSourceRange().getBegin(), I->getLParenLoc());
+                if (I->getSourceOrder() != -1) {
+                  Ranges.emplace_back(I->getSourceRange().getBegin(),
+                                      I->getLParenLoc());
                 }
 
                 Ranges.emplace_back(
@@ -251,7 +251,8 @@ public:
               // SM.getImmediateExpansionRange(SourceRange.getBegin()).getAsRange();
             }
 
-            if (SourceRange.getEnd().isMacroID() && !SourceRange.getBegin().isMacroID()) {
+            if (SourceRange.getEnd().isMacroID() &&
+                !SourceRange.getBegin().isMacroID()) {
               SourceRange.setEnd(
                   SM.getImmediateExpansionRange(SourceRange.getEnd())
                       .getAsRange()
@@ -272,30 +273,29 @@ public:
                 Code += std::string_view{SM.getCharacterData(Range.getBegin()),
                                          (size_t)Size};
 
-                //DE.Report(Range.getBegin(), ID)
-                //    << FixItHint::CreateReplacement(Range, Code);
+                DE.Report(Range.getBegin(), ID)
+                    << FixItHint::CreateReplacement(Range, Code);
 
                 (void)Replacements[SrcFileName.c_str()].add(
                     CreateReplacementFromSourceLocation(
                         SM, Range.getBegin(),
                         GetRangeSize(SM, Range, CI.getLangOpts()), Code));
 
-                auto R = CreateReplacementFromSourceLocation(
-                        SM, Range.getBegin(),
-                        GetRangeSize(SM, Range, CI.getLangOpts()), Code);
+                // auto R = CreateReplacementFromSourceLocation(
+                //         SM, Range.getBegin(),
+                //         GetRangeSize(SM, Range, CI.getLangOpts()), Code);
 
-                llvm::errs()
-                  << "FilePath: "
-                  << R.getFilePath()
-                  << " Offset: "
-                  << R.getOffset()
-                  << " Length: "
-                  << R.getLength()
-                  << " ReplacementText: "
-                  << R.getReplacementText()
-                  << '\n'
-                  ;
-
+                // llvm::errs()
+                //   << "FilePath: "
+                //   << R.getFilePath()
+                //   << " Offset: "
+                //   << R.getOffset()
+                //   << " Length: "
+                //   << R.getLength()
+                //   << " ReplacementText: "
+                //   << R.getReplacementText()
+                //   << '\n'
+                //   ;
               }
             }
           }
