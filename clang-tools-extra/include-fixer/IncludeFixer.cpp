@@ -171,10 +171,16 @@ tooling::TranslationUnitReplacements MergeReplacements(
   return Result;
 }
 
+bool CheckAccess(const clang::FieldDecl *Decl) {
+  return Decl && (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
+                  Decl->getAccess() == clang::AccessSpecifier::AS_protected);
+}
+
 bool IsFormated(const clang::FieldDecl *Decl) {
-  return !Decl ||
-         (Decl->getName().starts_with("m_") ||
-          Decl->getName().starts_with("_") || Decl->getName().ends_with("_"));
+
+  return !Decl || (!CheckAccess(Decl) || (Decl->getName().starts_with("m_") ||
+                                          Decl->getName().starts_with("_") ||
+                                          Decl->getName().ends_with("_")));
 }
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
@@ -206,19 +212,16 @@ public:
           if (auto *Decl = I->getMember();
               Decl && !I->isInClassMemberInitializer()) {
 
-            if (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
-                Decl->getAccess() == clang::AccessSpecifier::AS_private)
+            if (!IsFormated(Decl)) {
 
-              if (!IsFormated(Decl)) {
-
-                if (I->getSourceOrder() != -1) {
-                  Ranges.emplace_back(I->getSourceRange().getBegin(),
-                                      I->getLParenLoc());
-                }
-
-                Ranges.emplace_back(
-                    clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
+              if (I->getSourceOrder() != -1) {
+                Ranges.emplace_back(I->getSourceRange().getBegin(),
+                                    I->getLParenLoc());
               }
+
+              Ranges.emplace_back(
+                  clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
+            }
           }
         }
       }
@@ -232,17 +235,15 @@ public:
 
           if (FieldDecl)
             if (auto *Decl = FieldDecl->getCanonicalDecl())
-              if (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
-                  Decl->getAccess() == clang::AccessSpecifier::AS_private)
-                if (Decl && !IsFormated(Decl)) {
-                  if (Decl) {
-                    Ranges.emplace_back(clang::SourceRange(Decl->getLocation(),
-                                                           Decl->getEndLoc()));
-                  }
-                  if (MemberExpr) {
-                    Ranges.emplace_back(MemberExpr->getMemberLoc());
-                  }
+              if (Decl && !IsFormated(Decl)) {
+                if (Decl) {
+                  Ranges.emplace_back(clang::SourceRange(Decl->getLocation(),
+                                                         Decl->getEndLoc()));
                 }
+                if (MemberExpr) {
+                  Ranges.emplace_back(MemberExpr->getMemberLoc());
+                }
+              }
 
           for (auto SourceRange : Ranges) {
 
