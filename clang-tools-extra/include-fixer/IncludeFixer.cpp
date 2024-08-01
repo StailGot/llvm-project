@@ -41,6 +41,13 @@ std::string FixupWithCase(StringRef Name) {
   static llvm::Regex Splitter(
       "([a-z0-9A-Z]*)(_+)|([A-Z]?[a-z0-9]+)([A-Z]|$)|([A-Z]+)([A-Z]|$)");
 
+  llvm::SmallString<256> s = Name;
+  if (s.starts_with("s_") || s.starts_with("c_") || s.starts_with("m_") ||
+      s.starts_with("g_"))
+    s.erase(s.begin(), s.begin() + 2);
+
+  Name = s;
+
   SmallVector<StringRef, 16> Substrs;
   Name.split(Substrs, "_", -1, false);
 
@@ -175,17 +182,20 @@ bool CheckAccess(const clang::VarDecl *Decl) {
   return Decl &&
          (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
           Decl->getAccess() == clang::AccessSpecifier::AS_protected) &&
-         Decl->getType().isConstQualified();
+         // Decl->getType().isConstQualified();
+         !Decl->getType().isConstQualified();
 }
 
-bool IsFormated(const clang::VarDecl *Decl) {
+bool IsFormated(const clang::VarDecl *Decl, StringRef Prefix) {
+
+  auto Name = Decl ? Decl->getName() : "";
 
   return !Decl ||
-         (!CheckAccess(Decl) ||
-          (Decl->getName().starts_with("m_") ||
-           Decl->getName().starts_with("c_") ||
-           // Decl->getName().starts_with("s_") ||
-           Decl->getName().starts_with("_") || Decl->getName().ends_with("_")));
+         (!CheckAccess(Decl) || (Name.starts_with(Prefix)
+                                 // Name.starts_with("_") || Name.ends_with("_")
+                                 // || Name.starts_with("m_") ||
+                                 // Name.starts_with("s_") ||
+                                 ));
 }
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
@@ -245,16 +255,20 @@ public:
 
       {
         {
+          // constexpr StringRef Prefix = "c_";
+          constexpr StringRef Prefix = "s_";
+
           auto &&DE = Result.SourceManager->getDiagnostics();
 
-          auto ID =
-              DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "add c_");
+          auto ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                       "add prefix");
 
           if (VarDecl)
             if (auto *Decl = VarDecl->getCanonicalDecl())
-              if (Decl && !IsFormated(Decl) && !Decl->getLocation().isMacroID()
-                  //&& Decl->getType().isConstQualified()
-              ) {
+              if (Decl && !IsFormated(Decl, Prefix) &&
+                  !Decl->getLocation().isMacroID()) {
+
+                // auto End = Decl->getName().size();
 
                 if (Decl) {
                   Ranges.emplace_back(clang::SourceRange(Decl->getLocation(),
@@ -283,13 +297,13 @@ public:
             //           .getAsRange();
             // }
 
-            // if (SourceRange.getEnd().isMacroID() &&
-            //     !SourceRange.getBegin().isMacroID()) {
-            //   SourceRange.setEnd(
-            //       SM.getImmediateExpansionRange(SourceRange.getEnd())
-            //           .getAsRange()
-            //           .getEnd());
-            // }
+            if (SourceRange.getEnd().isMacroID() &&
+                !SourceRange.getBegin().isMacroID()) {
+              SourceRange.setEnd(
+                  SM.getImmediateExpansionRange(SourceRange.getEnd())
+                      .getAsRange()
+                      .getEnd());
+            }
 
             auto Range = CharSourceRange::getTokenRange(SourceRange);
 
@@ -301,19 +315,19 @@ public:
 
               if (Size > 0) {
 
-                std::string Code{"c_"};
-                //Code += std::string_view{SM.getCharacterData(Range.getBegin()), (size_t)Size};
+                std::string Code = Prefix.str();
+                // Code +=
+                // std::string_view{SM.getCharacterData(Range.getBegin()),
+                // (size_t)Size};
 
-                auto NewCode = std::string_view{SM.getCharacterData(Range.getBegin()), (size_t)Size};
+                auto NewCode = std::string_view{
+                    SM.getCharacterData(Range.getBegin()), (size_t)Size};
 
-                if (auto assignPos = NewCode.find('='); assignPos != std::wstring_view::npos)
-                {
-                  Code += FixupWithCase(StringRef{NewCode.data(), assignPos-1});
-                  Code += " ";
+                if (auto assignPos = NewCode.find_first_of("{([= ");
+                    assignPos != std::wstring_view::npos) {
+                  Code += FixupWithCase({NewCode.data(), assignPos});
                   Code.append(NewCode.begin() + assignPos, NewCode.end());
-                }
-                else
-                {
+                } else {
                   Code += FixupWithCase(NewCode);
                 }
 
@@ -427,7 +441,7 @@ public:
       }
 
     std::scoped_lock Lock{MU};
-    TURs.push_back(TUR);
+    TURs.emplace_back(std::move(TUR));
   }
 
 private:
