@@ -41,11 +41,11 @@ std::string FixupWithCase(StringRef Name) {
   static llvm::Regex Splitter(
       "([a-z0-9A-Z]*)(_+)|([A-Z]?[a-z0-9]+)([A-Z]|$)|([A-Z]+)([A-Z]|$)");
 
-  SmallVector<StringRef, 8> Substrs;
+  SmallVector<StringRef, 16> Substrs;
   Name.split(Substrs, "_", -1, false);
 
-  SmallVector<StringRef, 8> Words;
-  SmallVector<StringRef, 8> Groups;
+  SmallVector<StringRef, 16> Words;
+  SmallVector<StringRef, 16> Groups;
   for (auto Substr : Substrs) {
     while (!Substr.empty()) {
       Groups.clear();
@@ -68,7 +68,7 @@ std::string FixupWithCase(StringRef Name) {
   if (Words.empty())
     return Name.str();
 
-  SmallString<128> Fixup;
+  SmallString<256> Fixup;
 
   for (auto const &Word : Words) {
     if (&Word == &Words.front()) {
@@ -302,8 +302,20 @@ public:
               if (Size > 0) {
 
                 std::string Code{"c_"};
-                Code += std::string_view{SM.getCharacterData(Range.getBegin()),
-                                         (size_t)Size};
+                //Code += std::string_view{SM.getCharacterData(Range.getBegin()), (size_t)Size};
+
+                auto NewCode = std::string_view{SM.getCharacterData(Range.getBegin()), (size_t)Size};
+
+                if (auto assignPos = NewCode.find('='); assignPos != std::wstring_view::npos)
+                {
+                  Code += FixupWithCase(StringRef{NewCode.data(), assignPos-1});
+                  Code += " ";
+                  Code.append(NewCode.begin() + assignPos, NewCode.end());
+                }
+                else
+                {
+                  Code += FixupWithCase(NewCode);
+                }
 
                 DE.Report(Range.getBegin(), ID)
                     << FixItHint::CreateReplacement(Range, Code);
@@ -352,9 +364,13 @@ public:
     //                  .bind("memberExpr")),
     //     &Handler);
 
+    // auto ClassStaticVarDecl =
+    //     varDecl(isStaticStorageClass(), unless(isStaticLocal()),
+    //             hasParent(cxxRecordDecl()));
+
     auto ClassStaticVarDecl =
-        varDecl(isStaticStorageClass(), unless(isStaticLocal()),
-                hasParent(cxxRecordDecl()));
+        varDecl(anyOf(allOf(isStaticStorageClass(), unless(isStaticLocal())),
+                      has(nestedNameSpecifierLoc())));
 
     Matcher.addMatcher(
         traverse(TK_IgnoreUnlessSpelledInSource,
@@ -372,12 +388,12 @@ public:
                                 ClassStaticVarDecl.bind("varDecl")),
                        &Handler);
 
-    Matcher.addMatcher(traverse(TK_IgnoreUnlessSpelledInSource,
-                                varDecl(anyOf(allOf(isStaticStorageClass(),
-                                                    unless(isStaticLocal())),
-                                              has(nestedNameSpecifierLoc())))
-                                    .bind("varDecl")),
-                       &Handler);
+    // Matcher.addMatcher(traverse(TK_IgnoreUnlessSpelledInSource,
+    //                             varDecl(anyOf(allOf(isStaticStorageClass(),
+    //                                                 unless(isStaticLocal())),
+    //                                           has(nestedNameSpecifierLoc())))
+    //                                 .bind("varDecl")),
+    //                    &Handler);
 
     // Matcher.addMatcher(
     //     traverse(TK_IgnoreUnlessSpelledInSource,
