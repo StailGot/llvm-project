@@ -171,16 +171,21 @@ tooling::TranslationUnitReplacements MergeReplacements(
   return Result;
 }
 
-bool CheckAccess(const clang::FieldDecl *Decl) {
-  return Decl && (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
-                  Decl->getAccess() == clang::AccessSpecifier::AS_protected);
+bool CheckAccess(const clang::VarDecl *Decl) {
+  return Decl &&
+         (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
+          Decl->getAccess() == clang::AccessSpecifier::AS_protected) &&
+         Decl->getType().isConstQualified();
 }
 
-bool IsFormated(const clang::FieldDecl *Decl) {
+bool IsFormated(const clang::VarDecl *Decl) {
 
-  return !Decl || (!CheckAccess(Decl) || (Decl->getName().starts_with("m_") ||
-                                          Decl->getName().starts_with("_") ||
-                                          Decl->getName().ends_with("_")));
+  return !Decl ||
+         (!CheckAccess(Decl) ||
+          (Decl->getName().starts_with("m_") ||
+           Decl->getName().starts_with("c_") ||
+           // Decl->getName().starts_with("s_") ||
+           Decl->getName().starts_with("_") || Decl->getName().ends_with("_")));
 }
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
@@ -190,56 +195,81 @@ public:
 
   void run(const MatchFinder::MatchResult &Result) override {
 
-    auto *FieldDecl = Result.Nodes.getNodeAs<clang::FieldDecl>("fieldDecl");
+    // auto *FieldDecl = Result.Nodes.getNodeAs<clang::FieldDecl>("fieldDecl");
+    auto *VarDecl = Result.Nodes.getNodeAs<clang::VarDecl>("varDecl");
     auto *MemberExpr = Result.Nodes.getNodeAs<clang::MemberExpr>("memberExpr");
-    auto *CXXConstructorDecl =
-        Result.Nodes.getNodeAs<clang::CXXConstructorDecl>("cxxConstructorDecl");
+    auto *declRefExpr =
+        Result.Nodes.getNodeAs<clang::DeclRefExpr>("declRefExpr");
+
+    // auto *CXXConstructorDecl =
+    //     Result.Nodes.getNodeAs<clang::CXXConstructorDecl>("cxxConstructorDecl");
 
     auto &&SM = *Result.SourceManager;
 
-    const auto Loc = CXXConstructorDecl ? CXXConstructorDecl->getBeginLoc()
-                                        : FieldDecl->getBeginLoc();
+    const auto Loc = VarDecl->getBeginLoc();
 
     const auto SrcFileName = GetSrcFileName(SM, Loc);
 
     if (SrcFileName.find("/Source/") != std::string::npos) {
+
+      // VarDecl->dump();
+
+      // if (MemberExpr)
+      //   MemberExpr->dump();
+
+      // if (declRefExpr)
+      //   declRefExpr->dump();
+
       std::vector<clang::SourceRange> Ranges;
 
-      if (CXXConstructorDecl && !CXXConstructorDecl->isDefaulted()) {
+      // if (CXXConstructorDecl && !CXXConstructorDecl->isDefaulted()) {
 
-        for (auto *I : CXXConstructorDecl->inits()) {
+      //  for (auto *I : CXXConstructorDecl->inits()) {
 
-          if (auto *Decl = I->getMember();
-              Decl && !I->isInClassMemberInitializer()) {
+      //    if (auto *Decl = I->getMember();
+      //        Decl && !I->isInClassMemberInitializer()) {
 
-            if (!IsFormated(Decl)) {
+      //      if (!IsFormated(Decl)) {
 
-              if (I->getSourceOrder() != -1) {
-                Ranges.emplace_back(I->getSourceRange().getBegin(),
-                                    I->getLParenLoc());
-              }
+      //        if (I->getSourceOrder() != -1) {
+      //          Ranges.emplace_back(I->getSourceRange().getBegin(),
+      //                              I->getLParenLoc());
+      //        }
 
-              Ranges.emplace_back(
-                  clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
-            }
-          }
-        }
-      }
+      //        Ranges.emplace_back(
+      //            clang::SourceRange(Decl->getLocation(), Decl->getEndLoc()));
+      //      }
+      //    }
+      //  }
+      //}
 
       {
         {
           auto &&DE = Result.SourceManager->getDiagnostics();
 
           auto ID =
-              DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "add m_");
+              DE.getCustomDiagID(clang::DiagnosticsEngine::Warning, "add c_");
 
-          if (FieldDecl)
-            if (auto *Decl = FieldDecl->getCanonicalDecl())
-              if (Decl && !IsFormated(Decl)) {
+          if (VarDecl)
+            if (auto *Decl = VarDecl->getCanonicalDecl())
+              if (Decl && !IsFormated(Decl) && !Decl->getLocation().isMacroID()
+                  //&& Decl->getType().isConstQualified()
+              ) {
+
                 if (Decl) {
                   Ranges.emplace_back(clang::SourceRange(Decl->getLocation(),
                                                          Decl->getEndLoc()));
                 }
+
+                if (VarDecl) {
+                  Ranges.emplace_back(clang::SourceRange(VarDecl->getLocation(),
+                                                         VarDecl->getEndLoc()));
+                }
+
+                if (declRefExpr) {
+                  Ranges.emplace_back(declRefExpr->getLocation());
+                }
+
                 if (MemberExpr) {
                   Ranges.emplace_back(MemberExpr->getMemberLoc());
                 }
@@ -247,18 +277,19 @@ public:
 
           for (auto SourceRange : Ranges) {
 
-            if (SourceRange.getBegin().isMacroID()) {
-              // SourceRange =
-              // SM.getImmediateExpansionRange(SourceRange.getBegin()).getAsRange();
-            }
+            // if (SourceRange.getBegin().isMacroID()) {
+            //   SourceRange =
+            //       SM.getImmediateExpansionRange(SourceRange.getBegin())
+            //           .getAsRange();
+            // }
 
-            if (SourceRange.getEnd().isMacroID() &&
-                !SourceRange.getBegin().isMacroID()) {
-              SourceRange.setEnd(
-                  SM.getImmediateExpansionRange(SourceRange.getEnd())
-                      .getAsRange()
-                      .getEnd());
-            }
+            // if (SourceRange.getEnd().isMacroID() &&
+            //     !SourceRange.getBegin().isMacroID()) {
+            //   SourceRange.setEnd(
+            //       SM.getImmediateExpansionRange(SourceRange.getEnd())
+            //           .getAsRange()
+            //           .getEnd());
+            // }
 
             auto Range = CharSourceRange::getTokenRange(SourceRange);
 
@@ -270,7 +301,7 @@ public:
 
               if (Size > 0) {
 
-                std::string Code{"m_"};
+                std::string Code{"c_"};
                 Code += std::string_view{SM.getCharacterData(Range.getBegin()),
                                          (size_t)Size};
 
@@ -282,9 +313,9 @@ public:
                         SM, Range.getBegin(),
                         GetRangeSize(SM, Range, CI.getLangOpts()), Code));
 
-                // auto R = CreateReplacementFromSourceLocation(
-                //         SM, Range.getBegin(),
-                //         GetRangeSize(SM, Range, CI.getLangOpts()), Code);
+                auto R = CreateReplacementFromSourceLocation(
+                    SM, Range.getBegin(),
+                    GetRangeSize(SM, Range, CI.getLangOpts()), Code);
 
                 // llvm::errs()
                 //   << "FilePath: "
@@ -315,16 +346,43 @@ public:
   XASTConsumer(ReplacementsMap &Replacements, CompilerInstance &CI)
       : Replacements{Replacements}, Handler{Replacements, CI} {
 
+    // Matcher.addMatcher(
+    //     traverse(TK_IgnoreUnlessSpelledInSource,
+    //              memberExpr(hasDeclaration(fieldDecl().bind("fieldDecl")))
+    //                  .bind("memberExpr")),
+    //     &Handler);
+
+    auto ClassStaticVarDecl =
+        varDecl(isStaticStorageClass(), unless(isStaticLocal()),
+                hasParent(cxxRecordDecl()));
+
     Matcher.addMatcher(
         traverse(TK_IgnoreUnlessSpelledInSource,
-                 memberExpr(hasDeclaration(fieldDecl().bind("fieldDecl")))
+                 memberExpr(hasDeclaration(ClassStaticVarDecl.bind("varDecl")))
                      .bind("memberExpr")),
         &Handler);
 
     Matcher.addMatcher(
         traverse(TK_IgnoreUnlessSpelledInSource,
-                 cxxConstructorDecl().bind("cxxConstructorDecl")),
+                 declRefExpr(hasDeclaration(ClassStaticVarDecl.bind("varDecl")))
+                     .bind("declRefExpr")),
         &Handler);
+
+    Matcher.addMatcher(traverse(TK_IgnoreUnlessSpelledInSource,
+                                ClassStaticVarDecl.bind("varDecl")),
+                       &Handler);
+
+    Matcher.addMatcher(traverse(TK_IgnoreUnlessSpelledInSource,
+                                varDecl(anyOf(allOf(isStaticStorageClass(),
+                                                    unless(isStaticLocal())),
+                                              has(nestedNameSpecifierLoc())))
+                                    .bind("varDecl")),
+                       &Handler);
+
+    // Matcher.addMatcher(
+    //     traverse(TK_IgnoreUnlessSpelledInSource,
+    //              cxxConstructorDecl().bind("cxxConstructorDecl")),
+    //     &Handler);
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
