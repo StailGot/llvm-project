@@ -180,22 +180,26 @@ tooling::TranslationUnitReplacements MergeReplacements(
 
 bool CheckAccess(const clang::VarDecl *Decl) {
   return Decl &&
-         (Decl->getAccess() == clang::AccessSpecifier::AS_private ||
-          Decl->getAccess() == clang::AccessSpecifier::AS_protected) &&
-         // Decl->getType().isConstQualified();
+         (
+             // Decl->getAccess() == clang::AccessSpecifier::AS_private ||
+             // Decl->getAccess() == clang::AccessSpecifier::AS_protected
+             Decl->getAccess() == clang::AccessSpecifier::AS_none) &&
          !Decl->getType().isConstQualified();
+  //! Decl->getType().isConstQualified();
 }
 
 bool IsFormated(const clang::VarDecl *Decl, StringRef Prefix) {
 
   auto Name = Decl ? Decl->getName() : "";
 
-  return !Decl ||
-         (!CheckAccess(Decl) || (Name.starts_with(Prefix)
-                                 // Name.starts_with("_") || Name.ends_with("_")
-                                 // || Name.starts_with("m_") ||
-                                 // Name.starts_with("s_") ||
-                                 ));
+  return !Decl || (!CheckAccess(Decl) ||
+                   (Name.starts_with(Prefix) || Name.starts_with("impl_") ||
+                    Name.starts_with("_wg") || Name.starts_with("Internal")
+
+                    // Name.starts_with("_") || Name.ends_with("_")
+                    // || Name.starts_with("m_") ||
+                    // Name.starts_with("s_") ||
+                    ));
 }
 
 class FunctionDeclMatchHandler : public MatchFinder::MatchCallback {
@@ -255,8 +259,9 @@ public:
 
       {
         {
+          constexpr StringRef Prefix = "g_";
           // constexpr StringRef Prefix = "c_";
-          constexpr StringRef Prefix = "s_";
+          //  constexpr StringRef Prefix = "s_";
 
           auto &&DE = Result.SourceManager->getDiagnostics();
 
