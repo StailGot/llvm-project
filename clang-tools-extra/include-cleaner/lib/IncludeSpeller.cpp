@@ -39,7 +39,8 @@ public:
       std::string FinalSpelling = Input.HS.suggestPathToFileForDiagnostics(
           Input.H.physical().getName(), WorkingDir,
           Input.Main->tryGetRealPathName(), &IsAngled);
-      return IsAngled ? "<" + FinalSpelling + ">" : "\"" + FinalSpelling + "\"";
+      //return IsAngled ? "<" + FinalSpelling + ">" : "\"" + FinalSpelling + "\"";
+      return "<" + FinalSpelling + ">";
     }
     llvm_unreachable("Unknown clang::include_cleaner::Header::Kind enum");
   }

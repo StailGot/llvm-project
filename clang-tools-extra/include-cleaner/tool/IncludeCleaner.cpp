@@ -12,7 +12,9 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Tooling/AllTUsExecution.h"
 #include "clang/Tooling/CommonOptionsParser.h"
+#include "clang/Tooling/Execution.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -116,6 +118,8 @@ format::FormatStyle getStyle(llvm::StringRef Filename) {
   return std::move(*S);
 }
 
+std::mutex MU;
+
 class Action : public clang::ASTFrontendAction {
 public:
   Action(llvm::function_ref<bool(llvm::StringRef)> HeaderFilter,
@@ -191,8 +195,10 @@ private:
       }
     }
 
-    if (!Results.Missing.empty() || !Results.Unused.empty())
+    if (!Results.Missing.empty() || !Results.Unused.empty()) {
+      std::scoped_lock Lock{MU};
       EditedFiles.try_emplace(Path, Final);
+    }
   }
 
   void writeHTML() {
@@ -212,21 +218,22 @@ private:
 };
 class ActionFactory : public tooling::FrontendActionFactory {
 public:
-  ActionFactory(llvm::function_ref<bool(llvm::StringRef)> HeaderFilter)
-      : HeaderFilter(HeaderFilter) {}
+  ActionFactory(llvm::function_ref<bool(llvm::StringRef)> HeaderFilter,
+                llvm::StringMap<std::string> &EditedFiles)
+      : HeaderFilter(HeaderFilter), EditedFiles(EditedFiles) {}
 
   std::unique_ptr<clang::FrontendAction> create() override {
     return std::make_unique<Action>(HeaderFilter, EditedFiles);
   }
 
-  const llvm::StringMap<std::string> &editedFiles() const {
-    return EditedFiles;
-  }
+  // const llvm::StringMap<std::string> &editedFiles() const {
+  //   return EditedFiles;
+  // }
 
 private:
   llvm::function_ref<bool(llvm::StringRef)> HeaderFilter;
   // Map from file name to final code with the include edits applied.
-  llvm::StringMap<std::string> EditedFiles;
+  llvm::StringMap<std::string> &EditedFiles;
 };
 
 // Compiles a regex list into a function that return true if any match a header.
@@ -277,6 +284,21 @@ std::function<bool(llvm::StringRef)> headerFilter() {
 int main(int argc, const char **argv) {
   using namespace clang::include_cleaner;
 
+  const char *Overview = R"(
+  Check includes across a whole C/C++ project
+  include-fixer --filter=CompressPathTest.cpp
+  )";
+
+  clang::tooling::ExecutorName.setInitialValue("all-TUs");
+
+  auto Executor = clang::tooling::createExecutorFromCommandLineArgs(
+      argc, argv, llvm::cl::getGeneralCategory(), Overview);
+
+  if (!Executor) {
+    llvm::errs() << llvm::toString(Executor.takeError()) << "\n";
+    return 1;
+  }
+
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
   auto OptionsParser =
       clang::tooling::CommonOptionsParser::create(argc, argv, IncludeCleaner);
@@ -295,16 +317,20 @@ int main(int argc, const char **argv) {
     }
   }
 
-  clang::tooling::ClangTool Tool(OptionsParser->getCompilations(),
-                                 OptionsParser->getSourcePathList());
+  // clang::tooling::ClangTool Tool(OptionsParser->getCompilations(),
+  //                                OptionsParser->getSourcePathList());
 
   auto HeaderFilter = headerFilter();
   if (!HeaderFilter)
     return 1; // error already reported.
-  ActionFactory Factory(HeaderFilter);
-  auto ErrorCode = Tool.run(&Factory);
+
+  llvm::StringMap<std::string> EditedFiles;
+
+  auto ErrorCode = Executor.get()->execute(
+      std::make_unique<ActionFactory>(HeaderFilter, EditedFiles));
+
   if (Edit) {
-    for (const auto &NameAndContent : Factory.editedFiles()) {
+    for (const auto &NameAndContent : EditedFiles) {
       llvm::StringRef FileName = NameAndContent.first();
       const std::string &FinalCode = NameAndContent.second;
       if (auto Err = llvm::writeToOutput(
@@ -318,5 +344,6 @@ int main(int argc, const char **argv) {
       }
     }
   }
-  return ErrorCode || Errors != 0;
+
+  return Errors != 0;
 }
