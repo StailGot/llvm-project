@@ -12,7 +12,9 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Tooling/AllTUsExecution.h"
 #include "clang/Tooling/CommonOptionsParser.h"
+#include "clang/Tooling/Execution.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -119,13 +121,14 @@ format::FormatStyle getStyle(llvm::StringRef Filename) {
 class Action : public clang::ASTFrontendAction {
 public:
   Action(llvm::function_ref<bool(llvm::StringRef)> HeaderFilter,
-         llvm::StringMap<std::string> &EditedFiles)
-      : HeaderFilter(HeaderFilter), EditedFiles(EditedFiles) {}
+         llvm::StringMap<std::string> &EditedFiles, std::mutex &MU)
+      : HeaderFilter(HeaderFilter), EditedFiles(EditedFiles), MU(MU) {}
 
 private:
   RecordedAST AST;
   RecordedPP PP;
   PragmaIncludes PI;
+  std::mutex &MU;
   llvm::function_ref<bool(llvm::StringRef)> HeaderFilter;
   llvm::StringMap<std::string> &EditedFiles;
 
@@ -203,8 +206,10 @@ private:
       }
     }
 
-    if (!Results.Missing.empty() || !Results.Unused.empty())
+    if (!Results.Missing.empty() || !Results.Unused.empty()) {
+      std::scoped_lock Lock{MU};
       EditedFiles.try_emplace(AbsPath, Final);
+    }
   }
 
   void writeHTML() {
@@ -224,11 +229,12 @@ private:
 };
 class ActionFactory : public tooling::FrontendActionFactory {
 public:
-  ActionFactory(llvm::function_ref<bool(llvm::StringRef)> HeaderFilter)
-      : HeaderFilter(HeaderFilter) {}
+  ActionFactory(llvm::function_ref<bool(llvm::StringRef)> HeaderFilter,
+                llvm::StringMap<std::string> &EditedFiles, std::mutex &MU)
+      : HeaderFilter(HeaderFilter), EditedFiles(EditedFiles), MU(MU) {}
 
   std::unique_ptr<clang::FrontendAction> create() override {
-    return std::make_unique<Action>(HeaderFilter, EditedFiles);
+    return std::make_unique<Action>(HeaderFilter, EditedFiles, MU);
   }
 
   const llvm::StringMap<std::string> &editedFiles() const {
@@ -238,7 +244,8 @@ public:
 private:
   llvm::function_ref<bool(llvm::StringRef)> HeaderFilter;
   // Map from file name to final code with the include edits applied.
-  llvm::StringMap<std::string> EditedFiles;
+  llvm::StringMap<std::string> &EditedFiles;
+  std::mutex &MU;
 };
 
 // Compiles a regex list into a function that return true if any match a header.
@@ -331,6 +338,16 @@ mapInputsToAbsPaths(clang::tooling::CompilationDatabase &CDB,
 int main(int argc, const char **argv) {
   using namespace clang::include_cleaner;
 
+  clang::tooling::ExecutorName.setInitialValue("all-TUs");
+
+  auto Executor = clang::tooling::createExecutorFromCommandLineArgs(
+      argc, argv, IncludeCleaner, Overview.data());
+
+  if (!Executor) {
+    llvm::errs() << llvm::toString(Executor.takeError()) << "\n";
+    return 1;
+  }
+
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
   auto OptionsParser =
       clang::tooling::CommonOptionsParser::create(argc, argv, IncludeCleaner);
@@ -358,21 +375,24 @@ int main(int argc, const char **argv) {
   if (!CDBToAbsPaths)
     return 1;
 
-  clang::tooling::ClangTool Tool(CDB, OptionsParser->getSourcePathList());
-
   auto HeaderFilter = headerFilter();
   if (!HeaderFilter)
     return 1; // error already reported.
-  ActionFactory Factory(HeaderFilter);
-  auto ErrorCode = Tool.run(&Factory);
+
+  llvm::StringMap<std::string> EditedFiles;
+  std::mutex MU;
+
+  auto ErrorCode = Executor.get()->execute(
+      std::make_unique<ActionFactory>(HeaderFilter, EditedFiles, MU));
+
   if (Edit) {
-    for (const auto &NameAndContent : Factory.editedFiles()) {
-      llvm::StringRef FileName = NameAndContent.first();
+    for (const auto &[Name, Content] : EditedFiles) {
+      llvm::StringRef FileName = Name;
       if (auto It = CDBToAbsPaths->find(FileName.str());
           It != CDBToAbsPaths->end())
         FileName = It->second;
 
-      const std::string &FinalCode = NameAndContent.second;
+      const std::string &FinalCode = Content;
       if (auto Err = llvm::writeToOutput(
               FileName, [&](llvm::raw_ostream &OS) -> llvm::Error {
                 OS << FinalCode;
